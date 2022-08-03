@@ -120,9 +120,15 @@ end
 function Plugin:StartCaptains()
     local GameIDs = Shine.GameIDs
 
-    Shared.ConsoleCommand(string.format("sv_maxbots %d", 0))
-    Shared.ConsoleCommand("sh_disableplugin voteRandom")
-    Shared.ConsoleCommand("sh_rr *")
+    if Plugin.Config.AutoRemoveBots then
+        Shared.ConsoleCommand(string.format("sv_maxbots %d", 0))
+    end
+    if Plugin.Config.AutoDisableVoteRandom then
+        Shared.ConsoleCommand("sh_disableplugin voteRandom")
+    end
+    if Plugin.Config.AutoReadyRoom then
+        Shared.ConsoleCommand("sh_rr *")
+    end
 
     self.InProgress = true
     self:Notify("Captains mode has started!", "yellow")
@@ -281,6 +287,17 @@ end
 function Plugin:EndCaptains()
     self:SendNetworkMessage(self.Captains, "EndCaptains", {}, true)
     self:ResetState()
+ 
+    if Plugin.Config.AutoRemoveBots then
+        Shared.ConsoleCommand(string.format("sv_maxbots %d", 12))
+    end
+    if Plugin.Config.AutoDisableVoteRandom then
+        Shared.ConsoleCommand("sh_enableplugin voteRandom")
+    end
+    if Plugin.Config.AutoDisableSelf then
+        Shared.ConsoleCommand("sh_disableplugin captainsmode")
+        self:Notify("Captains mode completed please ask a Diamond admin to reset the plugin.")
+    end
 end
 
 function Plugin:ReceiveRequestEndCaptains(Client, Data)
