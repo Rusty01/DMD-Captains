@@ -124,7 +124,7 @@ function Plugin:StartCaptains()
         Shared.ConsoleCommand(string.format("sv_maxbots %d", 0))
     end
     if Plugin.Config.AutoDisableVoteRandom then
-        Shared.ConsoleCommand("sh_disableplugin voteRandom")
+        Shared.ConsoleCommand("sh_unloadplugin voterandom")
     end
     if Plugin.Config.AutoReadyRoom then
         Shared.ConsoleCommand("sh_rr *")
@@ -292,10 +292,10 @@ function Plugin:EndCaptains()
         Shared.ConsoleCommand(string.format("sv_maxbots %d", 12))
     end
     if Plugin.Config.AutoDisableVoteRandom then
-        Shared.ConsoleCommand("sh_enableplugin voteRandom")
+        Shared.ConsoleCommand("sh_loadplugin voterandom")
     end
     if Plugin.Config.AutoDisableSelf then
-        Shared.ConsoleCommand("sh_disableplugin captainsmode")
+        Shared.ConsoleCommand("sh_unloadplugin captainsmode")
         self:Notify("Captains mode completed please ask a Diamond admin to reset the plugin.")
     end
 end
