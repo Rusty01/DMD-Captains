@@ -61,7 +61,7 @@ function CaptainMenu:Create()
 			local ListTitleText = ListTitlePanel:Add("Label")
 			ListTitleText:SetAnchor("CentreMiddle")
 			ListTitleText:SetFont(Fonts.kAgencyFB_Small)
-			ListTitleText:SetText("Players available for picking")
+			ListTitleText:SetText("DMD-Captains: Players available for picking")
 			ListTitleText:SetTextAlignmentX(GUIItem.Align_Center)
 			ListTitleText:SetTextAlignmentY(GUIItem.Align_Center)
 
@@ -212,7 +212,7 @@ function CaptainMenu:Create()
 	)
 
 	Window:AddTab(
-		"Misc",
+		"Cancel",
 		function(Panel)
 			local Cancel = Panel:Add("Button")
 			Cancel:SetFont(Fonts.kAgencyFB_Large)

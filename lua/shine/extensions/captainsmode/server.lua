@@ -53,6 +53,7 @@ function Plugin:CreateCommands()
 
         -- If we have only one captain, notify everyone that we need one more.
         if #self.Captains == 1 then
+            self.Notify("Diamond Gamers Captains mode:")
             self:Notify("To appoint yourself as captain, type !captain")
             Shine.Timer.Create(
                 "NeedOneMoreCaptain",
@@ -69,7 +70,7 @@ function Plugin:CreateCommands()
     end
 
     local CaptainCommand = self:BindCommand("sh_cm_captain", "captain", Captain, true)
-    CaptainCommand:Help("Make yourself a captain.")
+    CaptainCommand:Help("Diamond Gamers Captains mode: Make yourself a captain.")
 
     local function Cancel(Client)
         local Player = Client:GetControllingPlayer()
