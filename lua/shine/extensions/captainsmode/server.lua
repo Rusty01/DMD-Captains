@@ -296,6 +296,7 @@ function Plugin:EndCaptains()
     end
     if Plugin.Config.AutoDisableSelf then
         Shared.ConsoleCommand("sh_disableplugin captainsmode")
+        self:Notify("Captains mode completed please ask a Diamond admin to reset the plugin.")
     end
 end
 
