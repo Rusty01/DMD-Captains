@@ -212,7 +212,7 @@ function CaptainMenu:Create()
 	)
 
 	Window:AddTab(
-		"Misc",
+		"Cancel",
 		function(Panel)
 			local Cancel = Panel:Add("Button")
 			Cancel:SetFont(Fonts.kAgencyFB_Large)
