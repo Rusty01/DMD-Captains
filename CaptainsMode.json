@@ -1,0 +1,10 @@
+{
+    "AutoRemoveBots": true,
+    "AutoDisableVoteRandom ": true,
+    "AutoReadyRoom": true,
+    "AutoDisableSelf": true,
+    "AnnouncePlayerNames": true,
+    "CountdownSeconds": 60,
+    "ShowMarineAlienToCaptains": true,
+    "__Version": "0.9"
+}
