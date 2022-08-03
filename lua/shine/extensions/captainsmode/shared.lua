@@ -1,5 +1,5 @@
 local Plugin = {}
-Plugin.Version = "0.9.1"
+Plugin.Version = "0.9.2"
 Plugin.HasConfig = true
 Plugin.ConfigName = "CaptainsMode.json"
 
