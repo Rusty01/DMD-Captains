@@ -120,8 +120,9 @@ end
 function Plugin:StartCaptains()
     local GameIDs = Shine.GameIDs
 
-    Shared.ConsoleCommand(StringFormat("sv_maxbots %d", 0))
+    Shared.ConsoleCommand(string.format("sv_maxbots %d", 0))
     Shared.ConsoleCommand("sh_disableplugin voteRandom")
+    Shared.ConsoleCommand("sh_rr *")
 
     self.InProgress = true
     self:Notify("Captains mode has started!", "yellow")
@@ -183,7 +184,7 @@ function Plugin:ReceiveSetTeamName(Client, Data)
         local TeamName = Data.teamname
         self.TeamNames[CaptainIndex] = TeamName
         self:SendNetworkMessage(self.Captains, "TeamName", {team = CaptainIndex, teamname = TeamName}, true)
-        Shared.ConsoleCommand(StringFormat("sh_setteamname %s %s", CaptainIndex, TeamName))
+        Shared.ConsoleCommand(string.format("sh_setteamname %s %s", CaptainIndex, TeamName))
     end
 end
 
