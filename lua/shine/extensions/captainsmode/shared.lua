@@ -1,9 +1,13 @@
 local Plugin = {}
-Plugin.Version = "0.9"
+Plugin.Version = "0.9.1"
 Plugin.HasConfig = true
 Plugin.ConfigName = "CaptainsMode.json"
 
 Plugin.DefaultConfig = {
+    AutoRemoveBots = true,
+    AutoDisableVoteRandom = true,
+    AutoReadyRoom = true,
+    AutoDisableSelf = true,
     AnnouncePlayerNames = true,
     ShowMarineAlienToCaptains = true,
     CountdownSeconds = 60
