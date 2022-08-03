@@ -82,8 +82,8 @@ function Plugin:CreateCommands()
 end
 
 function Plugin:Initialise()
-    self:CreateCommands()
     self:ResetState()
+    self:CreateCommands()
 
     return true
 end
@@ -119,6 +119,9 @@ end
 
 function Plugin:StartCaptains()
     local GameIDs = Shine.GameIDs
+
+    Shared.ConsoleCommand(StringFormat("sv_maxbots %d", 0))
+    Shared.ConsoleCommand("sh_disableplugin voteRandom")
 
     self.InProgress = true
     self:Notify("Captains mode has started!", "yellow")
