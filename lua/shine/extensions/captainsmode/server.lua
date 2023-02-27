@@ -15,13 +15,6 @@ local StringFormat = string.format
 local tostring = tostring
 
 
-Plugin.Conflicts = {
-	DisableThem = {
-		"voterandom"
-	}
-}
-
-
 -- Block these votes when Captains Mode is running.
 Plugin.BlockedEndOfMapVotes = {
 	--VoteResetGame = true,
@@ -378,13 +371,7 @@ function Plugin:StartCaptainsPresetup()
 		Shared.ConsoleCommand(string.format("sv_maxbots %d", 0))
 	end
 	if Plugin.Config.AutoDisableVoteRandom then
-		--[[
-			trying instead of this. Plugin.Conflicts.DisableThem
-			This didn't really work anyway
-		]]
-		-- diable the plugin that auto random teams at start.?
-		-- no : Shared.ConsoleCommand("sh_disableplugin voteRandom")
-		-- yes: Shared.ConsoleCommand("sh_unloadplugin voteRandom")
+		Shared.ConsoleCommand("sh_unloadplugin voterandom")
 	end
 	if Plugin.Config.AutoReadyRoom then
 		--this forces everyone to the ready room
@@ -680,9 +667,7 @@ function Plugin:EndCaptains()
 		Shared.ConsoleCommand(string.format("sv_maxbots %d", 12))
 	end
 	if Plugin.Config.AutoDisableVoteRandom then
-	-- sh_loadplugin & sh_unloadplugin
-		Shared.ConsoleCommand("sh_enableplugin voteRandom")
-		--Shared.ConsoleCommand("sh_loadplugin voteRandom")
+		Shared.ConsoleCommand("sh_loadplugin voterandom")
 	end
 	if Plugin.Config.AutoDisableSelf then
 		--Shared.ConsoleCommand("sh_disableplugin captainsmodeharq")
@@ -1148,7 +1133,7 @@ function Plugin:TestingCaptainsPresetup()
 		Shared.ConsoleCommand(string.format("sv_maxbots %d", 0))
 	end
 	if Plugin.Config.AutoDisableVoteRandom then
-		Shared.ConsoleCommand("sh_disableplugin voteRandom")
+		Shared.ConsoleCommand("sh_unloadplugin voterandom")
 	end
 	if Plugin.Config.AutoReadyRoom then
 		--this forces everyone to the ready room
