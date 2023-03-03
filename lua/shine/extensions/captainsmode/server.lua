@@ -59,6 +59,10 @@ function Plugin:CreateCommands()
 		local TeamNumber   = Player:GetTeamNumber()
 		if TeamNumber == 3 then
 			Shine:Notify(Client, ChatName, PlayerName, "Spectators not allowed to Captain.")
+			-- requires register.
+			--self:SendTranslatedNotify( Client, "SPECTATOR_TO_CAPTAIN" )
+			--something is missing
+			--self:NotifyTranslated( nil, "SPECTATOR_TO_CAPTAIN")
 			return
 		end
 
@@ -80,6 +84,7 @@ function Plugin:CreateCommands()
 		if #self.Captains < 2 then
 			table.insert(self.Captains, Client)
 			self:Notify(PlayerName .. " is now a captain.", "green")
+			self.Pending = true
 		else
 			Shine:Notify(Client, ChatName, PlayerName, "There are already 2 captains.")
 			return
@@ -116,26 +121,47 @@ function Plugin:CreateCommands()
 	local CaptainCommand = self:BindCommand("sh_cm_captain", "captain", Captain, true)
 	CaptainCommand:Help("Diamond Gamers Captains mode: Make yourself a captain.")
 
+
+	--[[
+		The sh_cm_mutiny allows Players to drop out as captain.
+	]]
+	local function CaptainMutiny(Client)
+		local PlayerName = Shine.GetClientName( Client )
+		if self:GetCaptainIndex(Client) 
+		or Shine:HasAccess( Client, "sh_cm_cancel" )
+		then 
+			self:EndCaptains()
+			self:Notify(string.format("Captains mode was cancelled by %s.", PlayerName), "red")
+		else
+			Shine:Notify(Client, ChatName, PlayerName, "You are not allowed to Mutiny.")
+		end
+	end
+	self:BindCommand("sh_cm_mutiny", "cancelcaptains", CaptainMutiny
+	, true):Help("Cancel captains mode.")
+
+
 	--[[
 		The sh_cm_cancel allows admins to cancel captains for the users.
 	]]
-	local function Cancel(Client)
+	local function CancelCaptains(Client)
 		local PlayerName = Shine.GetClientName( Client )
 		self:EndCaptains()
 		self:Notify(string.format("Captains mode was cancelled by %s.", PlayerName), "red")
 	end
-	local CaptainCommand = self:BindCommand("sh_cm_cancel", "cancelcaptains", Cancel)
-	CaptainCommand:Help("Cancel captains mode.")
-	
-	
-	
-	Shine:RegisterCommand( "sh_cm_list", nil, function (Client)
+	self:BindCommand("sh_cm_cancel", nil, CancelCaptains
+		):Help("Cancel captains mode.")
+
+	--[[
+		Admins can list teams
+	]]	
+	self:BindCommand( "sh_cm_list", nil, function (Client)
 		self:ReportTeams( Client )
 	end):Help( "Lists the current teams." )
-	
-	
-	
-	Shine:RegisterCommand( "sh_cm_teams", "showteams", function (Client)
+
+	--[[
+		Players can re-enter Window
+	]]	
+	self:BindCommand( "sh_cm_teams", "showteams", function (Client)
 		if not self.InProgress then return end
 		if not Plugin.Config.AllowPlayersToViewTeams then return end 
 		self:SendNetworkMessage(Client, "ShowTeamMenu", {}, true)
@@ -143,7 +169,7 @@ function Plugin:CreateCommands()
 	, true ):Help( "Show current Captain Teams." )
 
 
-	Shine:RegisterCommand( "sh_cm_hidemouse", "hidemouse", function (Client)
+	self:BindCommand( "sh_cm_hidemouse", "hidemouse", function (Client)
 		self:SendNetworkMessage(Client, "HideMouse", {}, true)
 	end 
 	, true ):Help( "Hide the mouse if for some reason it is still showing." )		
@@ -225,6 +251,11 @@ end
 function Plugin:Initialise()
 	self:BroadcastModuleEvent( "Initialise" )
 	self.Logger:Debug( "Server Initialise" )
+	-- Setup for Think()
+	self.Delay = 0.5
+	self.LastRun = Shared.GetTime()
+	self.NextRun = self.LastRun+ self.Delay
+	self.ProcessEndCaptains = false
 
 	self:ResetState()
 	self:CreateCommands()
@@ -239,6 +270,7 @@ function Plugin:ResetState()
 	self.Logger:Debug( "Server ResetState" )
 	self:DestroyAllTimers()
 	self.InProgress = false
+	self.Pending = false
 
 	self.Players = {}
 	self.Captains = {}
@@ -371,14 +403,18 @@ function Plugin:StartCaptainsPresetup()
 		Shared.ConsoleCommand(string.format("sv_maxbots %d", 0))
 	end
 	if Plugin.Config.AutoDisableVoteRandom then
-		Shared.ConsoleCommand("sh_unloadplugin voterandom")
+		local Enabled, VoteRandom = Shine:IsExtensionEnabled( "voterandom" )
+		if Enabled and not VoteRandom.Suspended then
+			VoteRandom:Suspend()
+			self.Logger:Info( "Plugin voterandom has been suspended." )
+		end 
+		--Shared.ConsoleCommand("sh_unloadplugin voterandom")
+		--Shared.ConsoleCommand("sh_suspendplugin voterandom")
 	end
 	if Plugin.Config.AutoReadyRoom then
 		--this forces everyone to the ready room
-		--Shared.ConsoleCommand("sh_rr *")
-		--Shine.mapvote:ForcePlayersIntoReadyRoom()
-		local MapVote= Shine.Plugins.mapvote
-		if MapVote and MapVote.Enabled then
+		local Enabled, MapVote = Shine:IsExtensionEnabled( "mapvote" )
+		if Enabled then
 			MapVote:ForcePlayersIntoReadyRoom()
 		else
 			-- fallback to just moving *everyone* to the readyroom.
@@ -667,7 +703,13 @@ function Plugin:EndCaptains()
 		Shared.ConsoleCommand(string.format("sv_maxbots %d", 12))
 	end
 	if Plugin.Config.AutoDisableVoteRandom then
-		Shared.ConsoleCommand("sh_loadplugin voterandom")
+		local Enabled, VoteRandom = Shine:IsExtensionEnabled( "voterandom" )
+		if VoteRandom and not Enabled and VoteRandom.Suspended then
+			VoteRandom:Resume()
+			self.Logger:Info( "Plugin voterandom has been resumed." )
+		end 
+		--Shared.ConsoleCommand("sh_loadplugin voterandom")
+		--Shared.ConsoleCommand("sh_resumeplugin voterandom")
 	end
 	if Plugin.Config.AutoDisableSelf then
 		--Shared.ConsoleCommand("sh_disableplugin captainsmodeharq")
@@ -678,6 +720,7 @@ end
 
 function Plugin:ReceiveRequestEndCaptains(Client, Data)
 	self.Logger:Debug( "Server ReceiveRequestEndCaptains" )
+	-- allow Captain or Admin to cancel.
 	if self:GetCaptainIndex(Client) 
 	or Shine:HasAccess( Client, "sh_cm_cancel" ) 
 	then
@@ -827,7 +870,7 @@ end
 ]]
 function Plugin:JoinTeam(_, Player, NewTeam, Force, ShineForce)
 	if ShineForce then self.Logger:Trace( "Server JoinTeam Force"); return end
-	if not self.InProgress then return end
+	if not self.InProgress and NewTeam ~= 3 then self.Logger:Trace( "Server JoinTeam Not InProgress"); return end
 	if not Player then return end
 	local PlayerName = Player:GetName()
 	
@@ -844,7 +887,7 @@ function Plugin:JoinTeam(_, Player, NewTeam, Force, ShineForce)
 			return false 
 		end
 		--Moved To Spectate
- 		--Shine:NotifyError(Player,string.format("Attempting to join Team %s", NewTeam))		
+ 		--Shine:NotifyError(Player,string.format("Attempting to join Team %s [%s].", Plugin:GetTeamName( NewTeam ), NewTeam))
 		return
 	elseif NewTeam == 0 then
 		return		
@@ -934,8 +977,9 @@ function Plugin:SetGameState(Gamerules, State, OldState)
 	if State == kGameState.Started 
 	and not (self.InProgress or self.GameStarted) then
 		self.Logger:Debug( "Server state: End captains if it started outside of the mod" )
-		-- End captains if it started outside of the mod
-		self:EndCaptains()
+		-- End captains if it started outside of the mod.
+		-- Collect and Delay Ending for a Update cycle. 
+		self.ProcessEndCaptains = true
 		return	
 	end
 	
@@ -991,9 +1035,9 @@ function Plugin:SetGameState(Gamerules, State, OldState)
 				if self.InProgress then return end
 				if not self.GameStarted then return end
 				
-				self.Logger:Debug( "Ending Captains mode, game did not start." )
+				self.Logger:Info( "Ending Captains mode, game did not re-start after captains started it once." )
 				-- If the time still exists in 60 seconds, end Captains.
-				self:EndCaptains()
+				self.ProcessEndCaptains = true
 			end);
 			
 		end 
@@ -1133,14 +1177,20 @@ function Plugin:TestingCaptainsPresetup()
 		Shared.ConsoleCommand(string.format("sv_maxbots %d", 0))
 	end
 	if Plugin.Config.AutoDisableVoteRandom then
-		Shared.ConsoleCommand("sh_unloadplugin voterandom")
+		local Enabled, VoteRandom = Shine:IsExtensionEnabled( "voterandom" )
+		if VoteRandom and Enabled and not VoteRandom.Suspended then
+			VoteRandom:Suspend()
+			self.Logger:Info( "Plugin voterandom has been suspended." )
+		end
+		--Shared.ConsoleCommand("sh_unloadplugin voterandom")
+		--Shared.ConsoleCommand("sh_suspendplugin voterandom")
 	end
 	if Plugin.Config.AutoReadyRoom then
 		--this forces everyone to the ready room
 		--Shared.ConsoleCommand("sh_rr *")
-		--Shine.mapvote:ForcePlayersIntoReadyRoom()
-		local MapVote= Shine.Plugins.mapvote
-		if MapVote and MapVote.Enabled then
+		-- Shine.mapvote:ForcePlayersIntoReadyRoom()
+		local Enabled, MapVote = Shine:IsExtensionEnabled( "mapvote" )
+		if Enabled then
 			self.Logger:Info( "Server ForcePlayersIntoReadyRoom" )
 			MapVote:ForcePlayersIntoReadyRoom()
 		end
@@ -1249,6 +1299,23 @@ function Plugin:TestingCaptainsAddTimers()
 				
 end
 
+function Plugin:Think( DeltaTime )
+	local Time = Shared.GetTime()
+	if self.NextRun and self.NextRun > Time then
+		return
+	end
+	self.LastRun = Time
+	self.NextRun = self.LastRun+ self.Delay
+
+	-- Something wants to End captains.
+	if (self.ProcessEndCaptains) then
+		self.ProcessEndCaptains = false
+		if self.Pending then
+			self:EndCaptains()
+		end
+	end
+
+end
 
 
 
