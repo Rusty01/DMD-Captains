@@ -35,7 +35,7 @@ local TeamDisconnect = "Disconnected"
 
 function Plugin:GetTeamName( Team, Capitals, Singular )
 	if Team > 4 then
-		return TeamDisconnect	 
+		return TeamDisconnect
 	end
 	return Shine:GetTeamName( Team, Capitals, Singular )
 end
@@ -53,7 +53,7 @@ function Plugin:SetupDataTable()
 		isPickable = "boolean",
 		isCaptain= "boolean"
 	}
-	
+
 	self:AddDTVar( "string (255)", "Team1Name", "Marines" )
 	self:AddDTVar( "string (255)", "Team2Name", "Aliens" )
 	self:AddDTVar( "integer", "CaptainTurn", "0" )
@@ -67,9 +67,9 @@ function Plugin:SetupDataTable()
 	self:AddNetworkMessage("EndCaptains", {}, "Client")
 	self:AddNetworkMessage("CaptainsMatchStart", {}, "Client")
 	self:AddNetworkMessage("CaptainsMatchComplete", {}, "Client")
-	
+
 	self:AddNetworkMessage("RequestEndCaptains", {}, "Server")
-	
+
 	self:AddNetworkMessage("SetTeamName", {teamname = "string (255)"}, "Server")
 	self:AddNetworkMessage("TeamName", {team = "integer", teamname = "string (255)"}, "Client")
 	self:AddNetworkMessage("SetReady", {ready = "boolean"}, "Server")
@@ -78,10 +78,10 @@ function Plugin:SetupDataTable()
 	self:AddNetworkMessage("PickNotification", {text = "string (255)"}, "Client")
 	self:AddNetworkMessage("TeamNamesNotification", {marines = "string (255)", aliens = "string (255)"}, "Client")
 	self:AddNetworkMessage("CountdownNotification", {text = "string (255)"}, "Client")
-	
+
 	self:AddNetworkMessage("ShowTeamMenu", {}, "Client")
 	self:AddNetworkMessage("HideMouse", {}, "Client")
-	
+
 end
 
 
