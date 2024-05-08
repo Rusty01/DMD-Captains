@@ -1,0 +1,14 @@
+{
+	"NOTIFY_PREFIX": "[Captains]",
+	"PLAYER_VOTED_ENABLE": "{PlayerName} voted to enable captains mode ({VotesNeeded} more {VotesNeeded:Pluralise:vote|votes} needed)",
+	"PLAYER_VOTED_DISABLE": "{PlayerName} voted to disable captains mode ({VotesNeeded} more {VotesNeeded:Pluralise:vote|votes} needed)",
+	"PLAYER_VOTED_PRIVATE_ENABLE": "You voted to enable captains mode ({VotesNeeded} more {VotesNeeded:Pluralise:vote|votes} needed)",
+	"PLAYER_VOTED_PRIVATE_DISABLE": "You voted to disable captains mode ({VotesNeeded} more {VotesNeeded:Pluralise:vote|votes} needed)",
+	"ERROR_ALREADY_VOTED_ENABLE": "You have already voted to enable captains mode.",
+	"ERROR_ALREADY_VOTED_DISABLE": "You have already voted to disable captains mode.",
+	"ERROR_MUST_WAIT_ENABLE": "You must wait for {SecondsToWait:Duration} before voting to enable captains mode.",
+	"ERROR_MUST_WAIT_DISABLE": "You must wait for {SecondsToWait:Duration} before voting to disable captains mode.",
+	"ERROR_CANNOT_VOTE_IN_SPECTATE": "Spectators are not allowed to vote to toggle captains mode.",
+	"DISABLE_CAPTAINS": "Disable Captains Mode",
+	"ENABLE_CAPTAINS": "Enable Captains Mode"
+}
