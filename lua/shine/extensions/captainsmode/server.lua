@@ -23,19 +23,29 @@ Plugin.BlockedEndOfMapVotes = {
 	VoteChangeMap = true,
 	VoteAddCommanderBots = true
 }
+Plugin.BlockedVoteAlways = {
+	VotingForceEvenTeams = true,
+	VoteChangeMap = true
+}
 
 function Plugin:NS2StartVote( VoteName, Client, Data )
 	self.Logger:Debug( "Captains Mode NS2StartVote=========================== %s", VoteName)
-	if not (self.InProgress or self.GameStarted) then return end
+	if self.dt.Suspended or not (self.InProgress or self.GameStarted) then return end
 	--if not self:IsEndVote() and not self.CyclingMap then return end
+
+	if self.BlockedVoteAlways[ VoteName ] then
+		self.Logger:Debug( "Captains Mode NS2StartVote=========================== **BLOCKED**")
+		return false, kVoteCannotStartReason.Waiting
+	end
+
+	-- don't block if under a certain player count.
+	if Shine.GetHumanPlayerCount() < self.Config.BlockedVotesMinPlayer then return end
 
 	if self.BlockedEndOfMapVotes[ VoteName ] then
 		self.Logger:Debug( "Captains Mode NS2StartVote=========================== **BLOCKED**")
 		return false, kVoteCannotStartReason.Waiting
 	end
 end
-
-
 
 function Plugin:Notify(Message, Color)
 	local ChatName = "Captains Mode"
@@ -51,30 +61,178 @@ function Plugin:Notify(Message, Color)
 	Shine:NotifyDualColour(nil, 131, 0, 255, ChatName .. ": ", R, G, B, Message)
 end
 
+function Plugin:TranslatedNotify(Player, Message, Color)
+	local R, G, B = 255, 255, 255
+	if Color == "red" then
+		R, G, B = 255, 0, 0
+	elseif Color == "yellow" then
+		R, G, B = 255, 183, 2
+	elseif Color == "green" then
+		R, G, B = 79, 232, 9
+	end
+
+	Shine:TranslatedNotifyDualColour(Player, 131, 0, 255, "NOTIFY_PREFIX", R, G, B, Message, self.__Name)
+end
+
+function Plugin:NotifyCaptainsMessage( Player )
+
+	if #self.Captains == 1 then
+		self:TranslatedNotify( Player, "CAPTAINS_NEED_ONE" , "yellow")
+		self:TranslatedNotify( Player, "CAPTAINS_APPOINT" )				
+		local CaptainName = Shine.GetClientName( self.Captains[1] )
+		self:SendTranslatedNotify( Player, "CAPTAINS_ANNOUNCE_NAME", {
+			CaptainName= CaptainName
+		} )
+	
+	elseif #self.Captains == 2 then
+		self:TranslatedNotify( Player, "CAPTAINS_STARTED", "yellow" )
+		local Captain1Name = Shine.GetClientName( self.Captains[1] )
+		local Captain2Name = Shine.GetClientName( self.Captains[2] )
+		self:SendTranslatedNotify( Player, "CAPTAINS_WAIT_PICKING", {
+			Captain1Name = Captain1Name, 
+			Captain2Name = Captain2Name
+		} )
+
+	else
+		self:TranslatedNotify( Player, "CAPTAINS_NEED_MORE" , "yellow")
+		self:TranslatedNotify( Player, "CAPTAINS_APPOINT" )				
+	end
+
+end
+
+do
+
+	local CAPTAINS_TYPES = {
+		Captains = "CAPTAINS_NOTIFY_",
+		AutoDisableSelf = "CAPTAINS_AUTODISABLE_"
+	}
+	local CAPTAINS_DT = {
+		Captains = true
+	}
+
+	function Plugin:NotifyState( Player )
+		local Enable = self.dt.Suspended ~= true
+
+		Shine:TranslatedNotifyDualColour( Player, Enable and 0 or 255, Enable and 255 or 0, 0,
+			"CAPTAINS_TAG", 255, 255, 255, CAPTAINS_TYPES[ "Captains" ]..( Enable and "ENABLED" or "DISABLED" ),
+			self.__Name )
+	end
+
+	function Plugin:NotifyFeatureState( Type, Enable, Player )
+		Shine.AssertAtLevel( CAPTAINS_TYPES[ Type ], "Invalid captains mod feature: %s", 3, Type )
+
+		Shine:TranslatedNotifyDualColour( Player, Enable and 0 or 255, Enable and 255 or 0, 0,
+			"CAPTAINS_TAG", 255, 255, 255, CAPTAINS_TYPES[ Type ]..( Enable and "ENABLED" or "DISABLED" ),
+			self.__Name )
+	end
+
+	function Plugin:IsFeatureEnabled( Type )
+		Shine.AssertAtLevel( CAPTAINS_TYPES[ Type ], "Invalid captains mod feature: %s", 3, Type )
+
+		return self.Config[ Type ]
+	end
+
+	function Plugin:SetFeatureEnabled( Type, Enabled, DontSave )
+		Shine.AssertAtLevel( CAPTAINS_TYPES[ Type ], "Invalid captains mod feature: %s", 3, Type )
+
+		Enabled = Enabled and true or false
+		self.Config[ Type ] = Enabled
+		
+		if CAPTAINS_DT[ Type ] then 
+			self.dt[ Type ] = Enabled 
+		end
+
+		if not DontSave then
+			self:SaveConfig( true )
+		end
+
+		self.Logger:Trace( "Feature %s toggle %s", Type, ( Enabled and "ENABLED" or "DISABLED" ) )
+	
+		Shine.Hook.Broadcast( "OnCaptainsStateChange", Type, Enabled )
+	end
+
+end
+
+
+
+function Plugin:Initialise()
+	self:BroadcastModuleEvent( "Initialise" )
+	self.Logger:Debug( "Server Initialise" )
+	-- Setup for Think()
+	self.Delay = 0.5
+	self.LastRun = Shared.GetTime()
+	self.NextRun = self.LastRun+ self.Delay
+	self.ProcessEndCaptains = false
+	self.ProcessResetLastTeams = false
+	self.VoteRandom_ShuffleTeams = false
+
+	self.dt.Captains = (Plugin.Config.Captains ~= false)
+	self.dt.Suspended = (self.dt.Captains ~= true)
+
+	self:ResetState()
+	self:CreateCommands()
+
+	self:TestingCaptainsInitialise()
+
+	-- we won't reset these values between games.
+	self.LastTeamNames = {"Marines", "Aliens"}
+
+	return true
+end
+
+function Plugin:ResetState()
+
+	self.Logger:Debug( "Server ResetState" )
+	self:DestroyAllTimers()
+	self.InProgress = false
+	self.Pending = false
+	self.CaptainsNight = false
+
+	self.Players = {}
+	self.Captains = {}
+
+	self.TeamNames = {"Marines", "Aliens"}
+	self.Ready = {false, false}
+	self.LastCount = {0,0}
+
+	self.CaptainFirstTurn = nil
+	self.CaptainTurn = nil
+	self.MovingPlayers = false
+	self.GameStarted = false
+
+	self.Team1IsMarines = true
+	self.dt.Team1Name= self.TeamNames[1]
+	self.dt.Team2Name= self.TeamNames[2]
+
+	self.dt.CaptainTurn = 0
+
+end
+
 function Plugin:CreateCommands()
 
 	local function Captain(Client)
+		if self.dt.Suspended then 
+			self:NotifyState( Client );
+			return
+		end
+
 		local PlayerName = Shine.GetClientName( Client )
 		local Player       = Client:GetControllingPlayer()
 		local TeamNumber   = Player:GetTeamNumber()
 		if TeamNumber == 3 then
-			Shine:Notify(Client, ChatName, PlayerName, "Spectators not allowed to Captain.")
-			-- requires register.
-			--self:SendTranslatedNotify( Client, "SPECTATOR_TO_CAPTAIN" )
-			--something is missing
-			--self:NotifyTranslated( nil, "SPECTATOR_TO_CAPTAIN")
+			self:NotifyTranslated( Client , "SPECTATOR_TO_CAPTAIN" )
 			return
 		end
 
 		-- If there is a game in progress, deny it.
 		local Gamerules = GetGamerules()
 		if Gamerules:GetGameStarted() then
-			Shine:Notify(Client, ChatName, PlayerName, "A game has already started.")
+			self:NotifyTranslated( Client , "WARN_STARTED" )
 			return
 		end
 		-- Check if the player is already a captain.
 		if self:IsCaptain(Client) then
-			Shine:Notify(Client, ChatName, PlayerName, "You are already a captain.")
+			self:NotifyTranslated( Client , "WARN_ALREADY_CAPTAIN" )
 			if self.InProgress then
 			-- show the screen just in case.
 				self:SendNetworkMessage(Client, "ShowTeamMenu", {}, true)
@@ -86,7 +244,7 @@ function Plugin:CreateCommands()
 			self:Notify(PlayerName .. " is now a captain.", "green")
 			self.Pending = true
 		else
-			Shine:Notify(Client, ChatName, PlayerName, "There are already 2 captains.")
+			self:NotifyTranslated( Client , "WARN_TWO_CAPTAINS" )
 			return
 		end
 
@@ -101,20 +259,10 @@ function Plugin:CreateCommands()
 
 		-- If we have only one captain, notify everyone that we need one more.
 		if #self.Captains == 1 then
-			self:Notify("Diamond Gamers Captains mode:")
-			self:Notify("To appoint yourself as captain, type !captain")
+			self:NotifyTranslated( nil , "CAPTAINS_ANNOUNCE" )
+			self:NotifyTranslated( nil , "CAPTAINS_APPOINT" )
 			-- name, delay, reps, func
-			self:CreateTimer(
-				"NeedOneMoreCaptain",
-				20,
-				-1,
-				function(Timer)
-					local CaptainName = Shine.GetClientName( self.Captains[1] )
-					self:Notify("Need one more captain to start picking players.", "yellow")
-					self:Notify("To appoint yourself as captain, type !captain")
-					self:Notify(string.format("Current captain: %s", CaptainName))
-				end
-			)
+			self:CreateCaptainTimer()
 		end
 	end
 
@@ -126,6 +274,11 @@ function Plugin:CreateCommands()
 		The sh_cm_mutiny allows Players to drop out as captain.
 	]]
 	local function CaptainMutiny(Client)
+		if self.dt.Suspended then 
+			self:NotifyState( Client );
+			return
+		end		
+
 		local PlayerName = Shine.GetClientName( Client )
 		if self:IsCaptain(Client)
 		or Shine:HasAccess( Client, "sh_cm_cancel" )
@@ -144,6 +297,11 @@ function Plugin:CreateCommands()
 		The sh_cm_cancel allows admins to cancel captains for the users.
 	]]
 	local function CancelCaptains(Client)
+		if self.dt.Suspended then 
+			self:NotifyState( Client );
+			return
+		end		
+
 		local PlayerName = Shine.GetClientName( Client )
 		self:EndCaptains()
 		self:Notify(string.format("Captains mode was cancelled by %s.", PlayerName), "red")
@@ -162,6 +320,10 @@ function Plugin:CreateCommands()
 		Players can re-enter Window
 	]]
 	self:BindCommand( "sh_cm_teams", "showteams", function (Client)
+		if self.dt.Suspended then 
+			self:NotifyState( Client );
+			return
+		end
 		if not self.InProgress then return end
 		if not Plugin.Config.AllowPlayersToViewTeams then return end
 		self:SendNetworkMessage(Client, "ShowTeamMenu", {}, true)
@@ -174,10 +336,51 @@ function Plugin:CreateCommands()
 	end
 	, true ):Help( "Hide the mouse if for some reason it is still showing." )
 
+	--[[
+		The sh_cm_captainsnight allows admins to Force Everyone to RR for Captains night. 
+	]]
+	self:BindCommand("sh_cm_captainsnight", 'captainsnight', function (Client)
+		self:OnCaptainsNightChange( not self.CaptainsNight )
+	end
+		):Help("Toggle Captains Night to block team joining.")	
+
+	self:BindCommand("sh_cm_autodisable", nil, function (client) 
+		local feature = "AutoDisableSelf"
+		local NewState = not self:IsFeatureEnabled( feature)
+		self:SetFeatureEnabled( feature, NewState )
+		self:NotifyFeatureState( feature, NewState, client )
+	end ):Help("Toggle Captains Mod Auto Self Disable")
+
 	if Plugin.Config.AllowTesting then
 		self:CreateTestingCommands()
 	end
 
+end
+
+function Plugin:OnCaptainsNightChange( CaptainsNightChange )
+
+	self.CaptainsNight = CaptainsNightChange
+	
+	if self.CaptainsNight then
+		if self.dt.Suspended then
+			self:SetFeatureEnabled( "Captains", true )
+			self:NotifyState( nil );
+		end	
+	else
+		if not self.dt.Suspended then
+			self:SetFeatureEnabled( "Captains", false )
+			self:NotifyState( nil );
+		end
+		return	
+	end
+
+	--self.Config.CaptainsNight = self.CaptainsNight
+	--self:SaveConfig()
+
+	local message = string.format( "Captains Night - team joining %s.", self.CaptainsNight and "Blocked" or "Allowed" )
+	self.Logger:Debug( message )
+	self:Notify( message, "yellow")
+	self:CreateCaptainTimer()
 end
 
 function Plugin:ReportTeams( Client )
@@ -247,54 +450,15 @@ function Plugin:ReportTeams( Client )
 
 end
 
-
-function Plugin:Initialise()
-	self:BroadcastModuleEvent( "Initialise" )
-	self.Logger:Debug( "Server Initialise" )
-	-- Setup for Think()
-	self.Delay = 0.5
-	self.LastRun = Shared.GetTime()
-	self.NextRun = self.LastRun+ self.Delay
-	self.ProcessEndCaptains = false
-
-	self:ResetState()
-	self:CreateCommands()
-
-	self:TestingCaptainsInitialise()
-
-	return true
-end
-
-function Plugin:ResetState()
-
-	self.Logger:Debug( "Server ResetState" )
-	self:DestroyAllTimers()
-	self.InProgress = false
-	self.Pending = false
-
-	self.Players = {}
-	self.Captains = {}
-
-	self.TeamNames = {"Marines", "Aliens"}
-	self.Ready = {false, false}
-	self.LastCount = {0,0}
-
-	self.CaptainFirstTurn = nil
-	self.CaptainTurn = nil
-	self.MovingPlayers = false
-	self.GameStarted = false
-
-	if math.random(0, 1) == 1 then
-		self.Team1IsMarines = true
-		self.dt.Team1Name= self.TeamNames[1]
-		self.dt.Team2Name= self.TeamNames[2]
-	else
-		self.Team1IsMarines = false
-		self.dt.Team1Name= self.TeamNames[2]
-		self.dt.Team2Name= self.TeamNames[1]
-	end
-	self.dt.CaptainTurn = 0
-
+function Plugin:CreateCaptainTimer( )
+	self:CreateTimer(
+		"NeedOneMoreCaptain",
+		20,
+		-1,
+		function(Timer)
+			self:NotifyCaptainsMessage()
+		end
+	)
 end
 
 function Plugin:IsCaptain( Client )
@@ -321,7 +485,6 @@ function Plugin:GetCaptainIndex(Client)
 	return CaptainIndex
 end
 
-
 function Plugin:GetPickId(Client)
 
 	local SteamID = Client:GetUserId()
@@ -340,7 +503,7 @@ end
 ]]
 function Plugin:PlayerUpdate( Client )
 
-	if not self.InProgress then return end
+	if self.dt.Suspended or not self.InProgress then return end
 
 	local Player       = Client:GetControllingPlayer()
 	local SteamID      = Client:GetUserId()
@@ -391,7 +554,7 @@ end
 function Plugin:PlayerStatus( PlayerStatus )
 	-- PlayerStatus = self.Players[pickid]
 
-	if not self.InProgress then return end
+	if self.dt.Suspended or not self.InProgress then return end
 
 	if Plugin.Config.AllowPlayersToViewTeams then
 		self:SendNetworkMessage(nil, "PlayerStatus", PlayerStatus, true)
@@ -409,21 +572,21 @@ function Plugin:StartCaptainsPresetup()
 	self.InProgress = true
 
 	if Plugin.Config.AutoRemoveBots then
-		Shared.ConsoleCommand(string.format("sv_maxbots %d", 0))
-	end
-	if Plugin.Config.AutoDisableVoteRandom then
-		local Enabled, VoteRandom = Shine:IsExtensionEnabled( "voterandom" )
-		if Enabled and not VoteRandom.Suspended then
-			VoteRandom:Suspend()
-			self.Logger:Info( "Plugin voterandom has been suspended." )
+		local Enabled, DMDPlugin = Shine:IsExtensionEnabled( "dmd" )
+		if DMDPlugin and Enabled and DMDPlugin.ForceBotDelay then
+			-- This should bock DMD Plugin from manipulating bots
+			-- force bot delay to 24 hours.
+			DMDPlugin:ForceBotDelay(86400)
+			self.Logger:Info( "DMD Bot Delay set to 86400." )
 		end
-		--Shared.ConsoleCommand("sh_unloadplugin voterandom")
-		--Shared.ConsoleCommand("sh_suspendplugin voterandom")
+		Shared.ConsoleCommand(string.format("sv_maxbots %d", 0))
+		self.AutoRemoveBotsComplete = true
 	end
 	if Plugin.Config.AutoReadyRoom then
 		--this forces everyone to the ready room
 		local Enabled, MapVote = Shine:IsExtensionEnabled( "mapvote" )
 		if Enabled then
+			self.Logger:Trace( "Server ForcePlayersIntoReadyRoom" )
 			MapVote:ForcePlayersIntoReadyRoom()
 		else
 			-- fallback to just moving *everyone* to the readyroom.
@@ -438,18 +601,24 @@ function Plugin:StartCaptains()
 	local GameIDs = Shine.GameIDs
 	self.Logger:Debug( "Server Start Captains" )
 
-	self:Notify("Captains mode has started!", "yellow")
+	self:NotifyCaptainsMessage()
 
-	local Captain1Name = Shine.GetClientName( self.Captains[1] )
-	local Captain2Name = Shine.GetClientName( self.Captains[2] )
-	self:Notify(string.format("Please wait while %s and %s pick teams.", Captain1Name, Captain2Name))
+	-- Roll the dice to see who gets which team.
+	if math.random(0, 1) == 1 then
+		self.Team1IsMarines = true
+		self.dt.Team1Name= self.TeamNames[1]
+		self.dt.Team2Name= self.TeamNames[2]
+	else
+		self.Team1IsMarines = false
+		self.dt.Team1Name= self.TeamNames[2]
+		self.dt.Team2Name= self.TeamNames[1]
+	end
 
 	-- Send Player:client to  everyone
 	self.Logger:Debug( "Server Start Captains : Send Players" )
 	for Client, ID in GameIDs:Iterate() do
 		self:PlayerUpdate( Client )
 	end
-
 
 	if Plugin.Config.AllowPlayersToViewTeams then
 		self:SendNetworkMessage( nil , "StartCaptains", {team1marines = self.Team1IsMarines}, true)
@@ -475,7 +644,12 @@ function Plugin:StartCaptains()
 	self.dt.CaptainTurn = CaptainTurnIndex
 
 	local CaptainName =  Shine.GetClientName( self.CaptainTurn )
-	self:Notify(CaptainName .. " picks first.", "green")
+	-- self:Notify(CaptainName .. " picks first.", "green")
+	self:SendTranslatedNotifyColour( nil, "CAPTAINS_FIRST_PICK", {
+		R = 79, G = 232, B = 9,
+		CaptainName = CaptainName
+	} )
+
 end
 
 
@@ -518,8 +692,6 @@ function Plugin:IsCaptainBot(CaptainIndex)
 	end
 	return false
 end
-
-
 
 function Plugin:ReceiveSetReady(Client, Data)
 	local Team = self:GetCaptainIndex(Client)
@@ -603,7 +775,6 @@ function Plugin:ReceiveSetReady(Client, Data)
 	end
 end
 
-
 function Plugin:StartTeams()
 
 	local Gamerules = GetGamerules()
@@ -616,6 +787,9 @@ function Plugin:StartTeams()
 	end
 
 	self.MovingPlayers = true
+	if not self.VoteRandom_ShuffleTeams then
+		self:OverrideShuffleTeams()
+	end
 
 	-- Start the game
 	for pickid, Player in pairs(self.Players) do
@@ -710,22 +884,15 @@ function Plugin:EndCaptains()
 	self:SendNetworkMessage( nil, "EndCaptains", {}, true)
 	self:ResetState()
 
-	if Plugin.Config.AutoRemoveBots then
-		Shared.ConsoleCommand(string.format("sv_maxbots %d", 12))
-	end
-	if Plugin.Config.AutoDisableVoteRandom then
-		local Enabled, VoteRandom = Shine:IsExtensionEnabled( "voterandom" )
-		if VoteRandom and not Enabled and VoteRandom.Suspended then
-			VoteRandom:Resume()
-			self.Logger:Info( "Plugin voterandom has been resumed." )
+	if Plugin.Config.AutoRemoveBots and self.AutoRemoveBotsComplete then
+		self.AutoRemoveBotsComplete = nil
+		local Enabled, DMDPlugin = Shine:IsExtensionEnabled( "dmd" )
+		if DMDPlugin and Enabled and DMDPlugin.ForceBotDelay then
+			-- Allow DMDPlugin to add the bots 
+			DMDPlugin:ForceBotDelay(1)
+		else
+			Shared.ConsoleCommand(string.format("sv_maxbots %d", 12))
 		end
-		--Shared.ConsoleCommand("sh_loadplugin voterandom")
-		--Shared.ConsoleCommand("sh_resumeplugin voterandom")
-	end
-	if Plugin.Config.AutoDisableSelf then
-		--Shared.ConsoleCommand("sh_disableplugin captainsmodeharq")
-		--Shared.ConsoleCommand("sh_unloadplugin captainsmodeharq")
-		--self:Notify("Captains mode completed please ask a Diamond admin to reset the plugin.")
 	end
 end
 
@@ -740,7 +907,7 @@ function Plugin:ReceiveRequestEndCaptains(Client, Data)
 		self:Notify("Captains mode was cancelled by " .. PlayerName .. ".", "yellow")
 	else
 		local PlayerName = Shine.GetClientName(Client)
-		Shine:Notify(Client, ChatName, PlayerName, "You are not allowed to end Captains.")
+		self:NotifyTranslated( Client , "END_CAPTAINS_FAIL" )
 	end
 
 end
@@ -883,7 +1050,13 @@ end
 ]]
 function Plugin:JoinTeam(_, Player, NewTeam, Force, ShineForce)
 	if ShineForce then self.Logger:Trace( "Server JoinTeam Force"); return end
-	if not self.InProgress and NewTeam ~= 3 then self.Logger:Trace( "Server JoinTeam Not InProgress"); return end
+	
+	if not self.CaptainsNight and not self.InProgress 
+	and NewTeam ~= 3 then 
+		self.Logger:Trace( "Server JoinTeam Not InProgress [%s]", NewTeam); 
+		return 
+	end
+
 	if not Player then return end
 	local PlayerName = Player:GetName()
 
@@ -911,7 +1084,15 @@ function Plugin:JoinTeam(_, Player, NewTeam, Force, ShineForce)
 		end
 		-- Not Spectate, Not ReadyRoom
 		self.Logger:Debug( "Player Blocked from joining team %s : %s", NewTeam, PlayerName )
-		Shine:NotifyError(Player,string.format("Not allowed to join %s while captains picking is active.", Plugin:GetTeamName( NewTeam ) ))
+		if not self.CaptainsNight or self.InProgress then 
+			self:SendTranslatedError( Player, "JOIN_TEAMS_BLOCKED", {
+				team= Plugin:GetTeamName( NewTeam )
+			} )
+		else
+			self:SendTranslatedError( Player, "JOIN_TEAMS_CAPTAINS_NIGHT", {
+				team= Plugin:GetTeamName( NewTeam )
+			} )			
+		end
 		return false
 	end
 
@@ -992,6 +1173,7 @@ function Plugin:SetGameState(Gamerules, State, OldState)
 		-- End captains if it started outside of the mod.
 		-- Collect and Delay Ending for a Update cycle.
 		self.ProcessEndCaptains = true
+		self.ProcessResetLastTeams = true
 		return
 	end
 
@@ -1005,22 +1187,7 @@ function Plugin:SetGameState(Gamerules, State, OldState)
 		self:DestroyTimer("GameStartCountdown")
 		self.InProgress = false
 
-		local MarinesTeamName
-		local AliensTeamName
-		if self.Team1IsMarines then
-			MarinesTeamName = self.dt.Team1Name
-			AliensTeamName = self.dt.Team2Name
-		else
-			MarinesTeamName = self.dt.Team2Name
-			AliensTeamName = self.dt.Team1Name
-		end
-
-		self:SendNetworkMessage(
-			nil,
-			"TeamNamesNotification",
-			{marines = MarinesTeamName, aliens = AliensTeamName},
-			true
-		)
+		self:NotifyTeamNames()
 
 		return
 	end
@@ -1074,7 +1241,11 @@ end
 ]]
 function Plugin:ClientConfirmConnect( Client )
 
-	if not self.InProgress then return end
+	if self.dt.Suspended then return end
+	if not self.InProgress then 
+		self:NotifyCaptainsMessage(Client);
+		return 
+	end
 
 	self:PlayerUpdate( Client )
 
@@ -1158,6 +1329,8 @@ function Plugin:CreateTestingCommands()
 		TestCaptain allow for testing the Captains mod
 	]]
 	local function TestCaptain(Client)
+		if Plugin.dt.Suspended then return end
+		
 		local PlayerName = Shine.GetClientName( Client )
 		-- If there is a game in progress, deny it.
 		local Gamerules = GetGamerules()
@@ -1183,30 +1356,8 @@ function Plugin:TestingCaptainsPresetup()
 	local GameIDs = Shine.GameIDs
 	self.Logger:Debug( "Server TestingCaptainsPresetup" )
 
-	self.InProgress = true
+	self:StartCaptainsPresetup();
 
-	if Plugin.Config.AutoRemoveBots then
-		Shared.ConsoleCommand(string.format("sv_maxbots %d", 0))
-	end
-	if Plugin.Config.AutoDisableVoteRandom then
-		local Enabled, VoteRandom = Shine:IsExtensionEnabled( "voterandom" )
-		if VoteRandom and Enabled and not VoteRandom.Suspended then
-			VoteRandom:Suspend()
-			self.Logger:Info( "Plugin voterandom has been suspended." )
-		end
-		--Shared.ConsoleCommand("sh_unloadplugin voterandom")
-		--Shared.ConsoleCommand("sh_suspendplugin voterandom")
-	end
-	if Plugin.Config.AutoReadyRoom then
-		--this forces everyone to the ready room
-		--Shared.ConsoleCommand("sh_rr *")
-		-- Shine.mapvote:ForcePlayersIntoReadyRoom()
-		local Enabled, MapVote = Shine:IsExtensionEnabled( "mapvote" )
-		if Enabled then
-			self.Logger:Info( "Server ForcePlayersIntoReadyRoom" )
-			MapVote:ForcePlayersIntoReadyRoom()
-		end
-	end
 	self:DestroyTimer("NeedOneMoreCaptain")
 
 	-- Add 12 more bots for testing. We need the bots to add now so they get Ids generated in PlayerUpdate.
@@ -1312,6 +1463,8 @@ function Plugin:TestingCaptainsAddTimers()
 end
 
 function Plugin:Think( DeltaTime )
+	if self.dt.Suspended then return end
+
 	local Time = Shared.GetTime()
 	if self.NextRun and self.NextRun > Time then
 		return
@@ -1326,7 +1479,112 @@ function Plugin:Think( DeltaTime )
 			self:EndCaptains()
 		end
 	end
+	if (self.ProcessResetLastTeams == true) then
+		self.ProcessResetLastTeams = false
+		self:ResetLastTeams()
+	end
 
+end
+
+function Plugin:MapPostLoad()
+	
+	self:OverrideShuffleTeams()
+
+	if Plugin.Config.AutoDisableSelf and self.dt.Suspended ~= true then
+		-- Disable self after a new map loads.
+		self:OnSuspend()
+	end
+	
+end
+
+function Plugin:OverrideShuffleTeams()
+	local captains= self;
+
+	if self.VoteRandom_ShuffleTeams == true then return end
+
+	-- Check if seeding round & override time limit
+	local Enabled, VoteRandom = Shine:IsExtensionEnabled( "voterandom" )
+	if Enabled then
+		self.Logger:Trace( "Plugin voterandom is enabled. create override for ShuffleTeams" )
+
+		local oldShuffleTeams = VoteRandom.ShuffleTeams;
+		VoteRandom.ShuffleTeams = function(self, ResetScores, ForceMode)
+			
+			if captains.dt.Suspended then 
+				oldShuffleTeams(self, ResetScores, ForceMode); 
+				return 
+			end
+			if captains.dt.Captains and (captains.InProgress or captains.GameStarted)
+			then
+				self.Logger:Info( "Captains Mode has blocked VoteRandom.ShuffleTeams" )
+				return 
+			end
+			self.Logger:Info( "Captains Mode has allowed VoteRandom.ShuffleTeams" )
+
+			oldShuffleTeams(self, ResetScores, ForceMode);
+
+		end
+		self.VoteRandom_ShuffleTeams = true
+	end
+
+end
+
+
+function Plugin:OnCaptainsStateChange( Type, Enabled )
+	if Type ~= "Captains" then return end
+
+	self.dt.Suspended = (self.dt.Captains ~= true)
+
+	if Enabled ~= true then
+		self:EndCaptains()
+	else
+		self:ResetState()
+	end
+
+end
+
+function Plugin:OnSuspend()
+	self.Logger:Trace( "server: Plugin:OnSuspend" )
+	self.dt.Suspended = true
+	self:SetFeatureEnabled( "Captains", false, true )
+end
+
+function Plugin:OnResume()
+	self.Logger:Trace( "server: Plugin:OnResume")
+	self.dt.Suspended = false	
+	self:SetFeatureEnabled( "Captains", true, true )
+end
+
+function Plugin:NotifyTeamNames()
+
+	self.LastTeamNames = {"Marines", "Aliens"}
+	if self.Team1IsMarines then
+		self.LastTeamNames[1] = self.dt.Team1Name
+		self.LastTeamNames[2] = self.dt.Team2Name
+	else
+		self.LastTeamNames[1] = self.dt.Team2Name
+		self.LastTeamNames[2] = self.dt.Team1Name
+	end
+
+	self:SendNetworkMessage(
+		nil,
+		"TeamNamesNotification",
+		{marines = self.LastTeamNames[1], aliens = self.LastTeamNames[2]},
+		true
+	)
+
+end
+
+function Plugin:GetTeam1Name()
+	return self.LastTeamNames[1]
+end
+
+function Plugin:GetTeam2Name()
+	return self.LastTeamNames[2]
+end
+
+function Plugin:ResetLastTeams()
+	self.LastTeamNames = {"Marines", "Aliens"}
 end
 
 

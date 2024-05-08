@@ -9,6 +9,7 @@ Plugin.HasConfig = true
 Plugin.ConfigName = "CaptainsMode.json"
 
 Plugin.DefaultConfig = {
+	Captains = false,
 	AllowTesting = false,
 	AutoRemoveBots = true,
 	AutoDisableVoteRandom = true,
@@ -18,7 +19,8 @@ Plugin.DefaultConfig = {
 	AllowPlayersToViewTeams = true,
 	ShowMarineAlienToCaptains = true,
 	CountdownSeconds = 60,
-	LogLevel = "INFO"
+	LogLevel = "INFO",
+	BlockedVotesMinPlayer = 12
 }
 
 Plugin.NotifyPrefixColour = {
@@ -54,9 +56,11 @@ function Plugin:SetupDataTable()
 		isCaptain= "boolean"
 	}
 
+	self:AddDTVar( "boolean", "Captains", false )
+	self:AddDTVar( "boolean", "Suspended", false )
 	self:AddDTVar( "string (255)", "Team1Name", "Marines" )
 	self:AddDTVar( "string (255)", "Team2Name", "Aliens" )
-	self:AddDTVar( "integer", "CaptainTurn", "0" )
+	self:AddDTVar( "integer (0 to 2)", "CaptainTurn", "0" )
 
 	self:AddNetworkMessage("PlayerStatus", PlayerStatus, "Client")
 
@@ -71,7 +75,6 @@ function Plugin:SetupDataTable()
 	self:AddNetworkMessage("RequestEndCaptains", {}, "Server")
 
 	self:AddNetworkMessage("SetTeamName", {teamname = "string (255)"}, "Server")
-	self:AddNetworkMessage("TeamName", {team = "integer", teamname = "string (255)"}, "Client")
 	self:AddNetworkMessage("SetReady", {ready = "boolean"}, "Server")
 	self:AddNetworkMessage("UnsetReady", {}, "Client")
 
@@ -81,6 +84,23 @@ function Plugin:SetupDataTable()
 
 	self:AddNetworkMessage("ShowTeamMenu", {}, "Client")
 	self:AddNetworkMessage("HideMouse", {}, "Client")
+
+	self:AddTranslatedNotify( "CAPTAINS_ANNOUNCE_NAME", {
+        CaptainName = self:GetNameNetworkField()
+    } )
+	self:AddTranslatedNotify( "CAPTAINS_WAIT_PICKING", {
+        Captain1Name = self:GetNameNetworkField(),
+		Captain2Name = self:GetNameNetworkField()
+    } )	
+	self:AddTranslatedNotifyColour( "CAPTAINS_FIRST_PICK", {
+        CaptainName = self:GetNameNetworkField()
+    } )	
+	self:AddTranslatedError( "JOIN_TEAMS_BLOCKED", { 
+		team = self:GetNameNetworkField()
+	} )
+	self:AddTranslatedError( "JOIN_TEAMS_CAPTAINS_NIGHT", { 
+		team = self:GetNameNetworkField()
+	} )	
 
 end
 
