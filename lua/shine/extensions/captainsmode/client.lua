@@ -1202,6 +1202,8 @@ function Plugin:OnFirstThink()
 end
 
 function Plugin:Think( DeltaTime )
+	if self.dt.Suspended then return end
+
 	local Time = Shared.GetTime()
 	if self.NextRun > Time then
 		return
@@ -1234,6 +1236,8 @@ function Plugin:Think( DeltaTime )
 end
 
 function Plugin:Captain_GUIScoreboardUpdateTeam(  scoreboard, updateTeam  )
+	if self.dt.Suspended then return end
+
 	--Plugin._GUIScoreboardUpdateTeam(scoreboard, updateTeam)
 	local teamNameGUIItem = updateTeam["GUIs"]["TeamName"]
 	local teamScores = updateTeam["GetScores"]()
@@ -1262,6 +1266,7 @@ function Plugin:Captain_GUIScoreboardUpdateTeam(  scoreboard, updateTeam  )
 end
 
 function Plugin:Captain_GUIScoreboardSendKeyEvent(  Scoreboard, Key, Down )
+	if self.dt.Suspended then return end
 -- This will run on Every keypress.
 
 	-- if GameStarted then return end

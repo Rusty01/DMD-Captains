@@ -1,0 +1,12 @@
+{
+	"REMATCH_ENABLED": "Rematch is enabled.",
+	"REMATCH_DISABLED": "Rematch is disabled.",
+	"REMATCH_TAG": "[Rematch]",
+	"REMATCH_TOGGLED": "{Enabled:BoolToPhrase:enabled|disabled} rematch.",
+	"REMATCH_NOTIFY_ENABLED": "Rematch has been enabled.",
+	"REMATCH_NOTIFY_DISABLED": "Rematch has been disabled.",
+	"REMATCH_AUTODISABLE_ENABLED": "Rematch Auto Disable has been enabled.",
+	"REMATCH_AUTODISABLE_DISABLED": "Rematch Auto Disable has been disabled.",
+	"NOTIFY_PREFIX": "[Rematch]",
+	"REMATCH_FORCE": "Rematch team list has been forced."
+}

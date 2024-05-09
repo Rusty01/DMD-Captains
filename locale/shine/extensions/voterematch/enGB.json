@@ -1,0 +1,19 @@
+{
+	"NOTIFY_PREFIX": "[Rematch]",
+	"PLAYER_VOTED_ENABLE": "{PlayerName} voted to enable rematch ({VotesNeeded} more {VotesNeeded:Pluralise:vote|votes} needed)",
+	"PLAYER_VOTED_DISABLE": "{PlayerName} voted to disable rematch ({VotesNeeded} more {VotesNeeded:Pluralise:vote|votes} needed)",
+	"PLAYER_VOTED_PRIVATE_ENABLE": "You voted to enable rematch ({VotesNeeded} more {VotesNeeded:Pluralise:vote|votes} needed)",
+	"PLAYER_VOTED_PRIVATE_DISABLE": "You voted to disable rematch ({VotesNeeded} more {VotesNeeded:Pluralise:vote|votes} needed)",
+	"ERROR_ALREADY_VOTED_ENABLE": "You have already voted to enable rematch.",
+	"ERROR_ALREADY_VOTED_DISABLE": "You have already voted to disable rematch.",
+	"ERROR_MUST_WAIT_ENABLE": "You must wait for {SecondsToWait:Duration} before voting to enable rematch.",
+	"ERROR_MUST_WAIT_DISABLE": "You must wait for {SecondsToWait:Duration} before voting to disable rematch.",
+	"ERROR_CANNOT_VOTE_IN_SPECTATE": "Spectators are not allowed to vote to toggle rematch.",
+	"DISABLE_REMATCH": "Disable Rematch",
+	"ENABLE_REMATCH": "Enable Rematch",
+
+	"REMATCH_TAG": "[Rematch]",
+	"REMATCH_TOGGLED": "{Enabled:BoolToPhrase:enabled|disabled} rematch.",
+	"REMATCH_NOTIFY_ENABLED": "Rematch has been enabled.",
+	"REMATCH_NOTIFY_DISABLED": "Rematch has been disabled."
+}
