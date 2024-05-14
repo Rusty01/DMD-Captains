@@ -571,17 +571,6 @@ function Plugin:StartCaptainsPresetup()
 	self.Logger:Debug( "Server Start Captains Presetup" )
 	self.InProgress = true
 
-	if Plugin.Config.AutoRemoveBots then
-		local Enabled, DMDPlugin = Shine:IsExtensionEnabled( "dmd" )
-		if DMDPlugin and Enabled and DMDPlugin.ForceBotDelay then
-			-- This should bock DMD Plugin from manipulating bots
-			-- force bot delay to 24 hours.
-			DMDPlugin:ForceBotDelay(86400)
-			self.Logger:Info( "DMD Bot Delay set to 86400." )
-		end
-		Shared.ConsoleCommand(string.format("sv_maxbots %d", 0))
-		self.AutoRemoveBotsComplete = true
-	end
 	if Plugin.Config.AutoReadyRoom then
 		--this forces everyone to the ready room
 		local Enabled, MapVote = Shine:IsExtensionEnabled( "mapvote" )
@@ -593,6 +582,27 @@ function Plugin:StartCaptainsPresetup()
 			Shared.ConsoleCommand("sh_rr *")
 		end
 	end
+	if Plugin.Config.AutoRemoveBots then
+		local Enabled, DMDBotManager = Shine:IsExtensionEnabled( "dmdbotmanager" )
+		if DMDBotManager and Enabled then
+			-- This should bock DMD Plugin from manipulating bots
+			-- force bots disabled.
+			DMDBotManager:SetBotsEnabled(false)			
+			-- force bot delay to 24 hours.
+			DMDBotManager:ForceBotDelay(86400)
+			self.Logger:Info( "DMD Bot Delay set to 86400." )
+		else
+			local Gamerules = GetGamerules()
+			if Gamerules and Gamerules.botTeamController then 
+				local BotController = Gamerules.botTeamController
+				self.SavedBotControllerMaxBots = BotController.MaxBots
+			end
+			Shared.ConsoleCommand(string.format("sv_maxbots %d", 0))				
+		end
+		
+		self.AutoRemoveBotsComplete = true
+	end
+
 end
 --[[
 	StartCaptains: Start by sending all the players to the clients and setting who picks first.
@@ -886,12 +896,15 @@ function Plugin:EndCaptains()
 
 	if Plugin.Config.AutoRemoveBots and self.AutoRemoveBotsComplete then
 		self.AutoRemoveBotsComplete = nil
-		local Enabled, DMDPlugin = Shine:IsExtensionEnabled( "dmd" )
-		if DMDPlugin and Enabled and DMDPlugin.ForceBotDelay then
-			-- Allow DMDPlugin to add the bots 
-			DMDPlugin:ForceBotDelay(1)
+		local Enabled, DMDBotManager = Shine:IsExtensionEnabled( "dmdbotmanager" )
+		if DMDBotManager and Enabled then
+			-- Allow DMDBotManager to add the bots 
+			DMDBotManager:SetBotsEnabled(true)
+			DMDBotManager:ForceBotDelay(1)
 		else
-			Shared.ConsoleCommand(string.format("sv_maxbots %d", 12))
+			local maxbots = self.SavedBotControllerMaxBots or 12
+			Shared.ConsoleCommand(string.format("sv_maxbots %d", maxbots))
+			self.SavedBotControllerMaxBots = nil
 		end
 	end
 end
@@ -1232,7 +1245,7 @@ end
 
 function Plugin:PlayerNameChange( Player, Name, OldName )
 	local Client = Shine.GetClientForPlayer( Player )
-	self.Logger:Trace( "Server PlayerNameChange from [%s] to [%s]", Name, OldName )
+	self.Logger:Trace( "Server PlayerNameChange from [%s] to [%s]", OldName, Name )
 	self:PlayerUpdate( Client )
 end
 
