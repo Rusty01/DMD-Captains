@@ -8,13 +8,20 @@ local Shine = Shine
 local SGUI = Shine.GUI
 local StringFormat = string.format
 local TableConcat = table.concat
+local TableCopy = table.Copy
 local Max = math.max;
 
-local CaptainMenu = {}
 
 function Plugin:Initialise()
 	self:BroadcastModuleEvent( "Initialise" )
 
+	if Plugin.Config.ShowMarineAlienToCaptains then
+		self.DefaultTeamNames = {"Marines", "Aliens"}
+	else
+		self.DefaultTeamNames = {"Team1", "Team2"}
+	end
+	
+	self.CaptainOptions = nil
 	self.Enabled = true
 	self:ResetState()
 
@@ -36,13 +43,17 @@ function Plugin:ResetState()
 	self.QueuePlayerUpdate = false
 
 	self.myPickid = ""
+	self.otherTeam = 0
 	self.myTeam = 0
 	self.myTeamName = ""
 	self.myTeamReady = false
+	self.mySwapRequest = false
+
 	self.Team1IsMarines = true
-	self.TeamStrings = {"Marines", "Aliens"}
+	self.TeamSwap = {false, false}
+	self.TeamStrings = TableCopy( self.DefaultTeamNames )
 	self.TeamIndex = {1, 2}
-	self.TeamNames = {"Marines", "Aliens"}
+	self.TeamNames = TableCopy( self.DefaultTeamNames )
 	self.CaptainNames = {"One","Two"}
 	self:ResetTeamNames( )
 
@@ -72,7 +83,6 @@ function Plugin:CaptainMenuReset()
 	self.TeamCount = {0,0}
 	self.TeamNotice = {"",""}
 
-	self.myTeamInput = nil
 	self.PickChange = false
 
 end
@@ -169,16 +179,29 @@ function Plugin:CaptainMenuInitialise()
 			ListTitleText:SetTextAlignmentX(GUIItem.Align_Center)
 			ListTitleText:SetTextAlignmentY(GUIItem.Align_Center)
 
+			if self.myTeam ~= 0 then
+				local ListTitleTeamText = ListTitlePanel:Add("Label")
+				--ListTitleTeamText:SetAnchor("CentreLeft")
+				ListTitleTeamText:SetAnchor(GUIItem.Left, GUIItem.Center)
+				ListTitleTeamText:SetFont(Fonts.kAgencyFB_Small)
+				ListTitleTeamText:SetText(  self:GetTeamString(self.myTeam)  )
+				ListTitleTeamText:SetTextAlignmentX(GUIItem.Align_Center)
+				ListTitleTeamText:SetTextAlignmentY(GUIItem.Align_Center)
+				ListTitleTeamText:SetPos(Vector(self.PanelSize.x * 0.02, self.PanelSize.y * 0.02, 0))
+				self:GUI_AddObj( nil, "ListTitleTeamText", ListTitleTeamText )
+			end
+
 			local PickList = Panel:Add("List")
 			PickList:SetAnchor("TopLeft")
 			PickList:SetSize(Vector(self.PanelSize.x * 0.96, self.PanelSize.y * 0.74, 0))
 			PickList:SetPos(Vector(self.PanelSize.x * 0.02, self.PanelSize.y * 0.09, 0))
-			PickList:SetColumns("NS2ID", "Name", "Marine", "Alien", "Room")
+			PickList:SetColumns("NS2ID", "Name", "Skill", "Marine", "Alien", "Room")
 			--PickList:SetSpacing(0.3, 0.55, 0.15)
-			PickList:SetSpacing(0.15, 0.50, 0.10, 0.10, 0.15)
+			PickList:SetSpacing(0.15, 0.40, 0.10, 0.10, 0.10, 0.15)
 			PickList:SetNumericColumn(1)
 			PickList:SetNumericColumn(3)
 			PickList:SetNumericColumn(4)
+			PickList:SetNumericColumn(5)
 			PickList.TitlePanel = ListTitlePanel
 			PickList.TitleText = ListTitleText
 
@@ -209,8 +232,28 @@ function Plugin:CaptainMenuInitialise()
 			Pick:SetEnabled(false)
 			Pick:SetIsVisible(false)
 
+			local SwapTeam = CommandPanel:Add("Button")
+			SwapTeam:SetFont(Fonts.kAgencyFB_Large)
+			SwapTeam:SetSize(Vector(CommandPanelSize.x * 0.2, CommandPanelSize.y, 0))
+			SwapTeam:SetPos(Vector(CommandPanelSize.x * 0.50, 0, 0))
+			SwapTeam:SetIsVisible( (self.myTeam ~= 0) )
+			local swapEnabled, swapText = self:FormatSwapText()
+			SwapTeam:SetEnabled( swapEnabled )
+			SwapTeam:SetText( swapText )			
+
+			function SwapTeam.DoClick()
+				self:Notify( "You clicked SwapTeam.")
+				self.TeamSwap[self.myTeam] = true
+				local swapEnabled, swapText = self:FormatSwapText()
+				SwapTeam:SetEnabled( swapEnabled )
+				SwapTeam:SetText( swapText )							
+				self:OnRequestSwapTeams(self.myTeam, false)
+			end
+
+
 			self:GUI_AddObj( nil, "TurnText", Turn )
 			self:GUI_AddObj( nil, "PickButton", Pick )
+			self:GUI_AddObj( nil, "SwapTeamButton", SwapTeam )
 
 			self:UpdateTurnLabels(Turn, Pick)
 
@@ -258,7 +301,6 @@ function Plugin:CaptainMenuInitialise()
 				ListTitleText:SetTextAlignmentY(GUIItem.Align_Center)
 				ListTitleText:SetText( self:FormatTeamHeading( i ) )
 				self:GUI_AddObj( i, "teamLabel", ListTitleText )
-				--self.TeamTitles[i] = ListTitleText
 
 				-- Add Input for Setting My Team Name
 				if self.myTeam == i then
@@ -406,7 +448,7 @@ function Plugin:CaptainMenuInitialise()
 				function Ready.DoClick()
 					self.myTeamReady = not self.myTeamReady
 					Ready:SetText( self.myTeamReady and "Not Ready" or "Ready")
-					self:SendNetworkMessage("SetReady", {ready = self.myTeamReady}, true)
+					self:SendNetworkMessage("SetReady", {ready = self.myTeamReady, team=self.myTeam, settings=false}, true)
 				end
 				self:GUI_AddObj( nil, "ReadyButton", Ready )
 
@@ -499,6 +541,311 @@ function Plugin:CaptainMenuInitialise()
 		end
 	)
 
+	-- if self.dt.TestingCaptains then
+	-- if Shine:HasAccess( Client, "sh_cm_captainsnight" ) then
+
+		local function GetTeamID( teamIndex, name )
+			return StringFormat("ID%sTeam%s", teamIndex, name)
+		end
+
+		local Units = SGUI.Layout.Units
+		local HighResScaled = Units.HighResScaled
+		local Percentage = Units.Percentage
+		local Spacing = Units.Spacing
+		local UnitVector = Units.UnitVector
+		local Auto = Units.Auto		
+		local SMALL_PADDING = HighResScaled( 8 )
+
+
+		local Font = {
+			Family = "kAgencyFB",
+			Size = HighResScaled( 27 )
+		}
+		local AgencyFBSmall = {
+			Family = "kAgencyFB",
+			Size = HighResScaled( 20 )
+		}		
+		local AgencyFBNormal = {
+			Family = "kAgencyFB",
+			Size = HighResScaled( 27 )
+		}
+		local AgencyFBMedium = {
+			Family = "kAgencyFB",
+			Size = Units.HighResScaled( 33 )
+		}		
+
+		if not self.CaptainOptions then 
+			self:RequestCaptainOptions()
+		end
+
+		self.Window:AddTab(
+			"Settings",
+			function(Panel)
+				self.Logger:Debug("Populate Settings Window" )
+				local Rows = {}
+
+		if self.CaptainOptions and self.CaptainOptions.ShowSettings then 
+				local teamIndex = 1
+				local inputName = StringFormat("SettingsTeam%sName", teamIndex)
+				local inputID = StringFormat("ID%sTeam", teamIndex)
+			
+				-- Rows[ #Rows + 1] = {
+				-- 	ID = this,
+				-- 	Class = "Label",
+				-- 	Props = {
+				-- 		Plugin = Plugin,
+				-- 		Margin = Spacing( 0, 0, 0, SMALL_PADDING ),
+				-- 		AutoSize = UnitVector( Percentage.ONE_HUNDRED, Units.Auto.INSTANCE ),
+				-- 		Text = "Label Text"
+				-- 	}
+				-- }
+
+			for i = 1, 2 do
+				local teamIndex = i
+
+				Rows[ #Rows + 1] = {
+					Class = "Horizontal",
+					Type = "Layout",
+					Props = {
+						AutoSize = UnitVector( Percentage( 96 ), HighResScaled( 32 ) ),
+						Margin = Spacing( 0, 0, 0, HighResScaled( 5 ) ),
+						Fill = false
+					},
+					Children = {
+						{
+							Class = "Label",
+							Props = {
+								AutoFont = Font,
+								DebugName =  inputName.."Label",
+								-- AutoSize = UnitVector( Percentage( 25 ), HighResScaled( 32 ) ),
+								AutoSize = UnitVector( Percentage( 25 ), Percentage.ONE_HUNDRED ),
+								-- Text = 	self:GetPhrase( "REASON" ),
+								Text = 	StringFormat("Team %s Name", teamIndex),
+								Margin = Spacing( HighResScaled( 5 )  ),								
+							}
+						},
+						{
+							ID = GetTeamID(teamIndex, "Name"),
+							Class = "TextEntry",
+							Props = {
+								DebugName = GetTeamID(teamIndex, "Name_Settings"),
+								Fill = true,
+								AutoFont = Font,
+								Margin = Spacing( HighResScaled( 5 ) ),
+								Text = "Team name text",
+								Data = { 
+									teamIndex = teamIndex
+								},
+							},
+							OnBuilt = function( config, TextEntry, Elements)
+								TextEntry.teamHasFocus = false
+								TextEntry.teamIndex = config.Props.Data.teamIndex
+								self:GUI_AddObj( nil, config.ID, TextEntry )
+								-- TextEntry:SetText(self:FormatTeamHeading( TextEntry.teamIndex ) )
+								TextEntry:SetText( self.TeamNames[TextEntry.teamIndex]  )
+							end
+						},
+						{
+							ID = GetTeamID( teamIndex, "Icon" ),
+							Class = "Button",
+							Props = {
+								DebugName = GetTeamID(teamIndex, "IconButton"),
+								AutoFont = {
+									Family = "Ionicons",
+									Size = HighResScaled( 29 )
+								},
+								AutoSize = UnitVector( HighResScaled( 32 ), HighResScaled( 32 ) ),
+								--Margin = Spacing( HighResScaled( 5 ) ),
+								Text = SGUI.Icons.Ionicons.Upload,
+								--Tooltip = self:GetPhrase( "SELECT_PLAYER" ),
+								Tooltip = "Send Name Change",
+								StyleName = "InputGroupEnd",
+								DoClick = function( Button )
+									teamInput = self:GUI_GetObj( nil, GetTeamID(Button.teamIndex, "Name") )
+									self:UpdateTeamNameForTeam( Button.teamIndex, teamInput )
+								end,
+								Data = {
+									teamIndex = teamIndex
+								}
+							},
+							OnBuilt = function( config, Button, Elements )
+								Button.teamIndex = config.Props.Data.teamIndex
+							end
+						}
+					}
+				}
+
+				Rows[ #Rows + 1] = {
+					Class = "Horizontal",
+					Type = "Layout",
+					Props = {
+						AutoSize = UnitVector( Percentage( 96 ), HighResScaled( 32 ) ),
+						--	Spacing( left, up, right, down )
+						Margin = Spacing( 0, 0, 0, HighResScaled( 5 ) ),
+						Fill = false
+					},
+					Children = {
+						{
+							ID = GetTeamID(teamIndex, "Swap"),
+							Class = "Button",
+							Props = {
+								AutoFont = Font,
+								AutoSize = UnitVector( Percentage( 20 ), HighResScaled( 32 ) ),
+								Margin = Spacing( HighResScaled( 32 ), HighResScaled( 5 ), HighResScaled( 5 ), HighResScaled( 5 ) ),
+								Text = StringFormat("Swap Team %s", teamIndex),
+								-- Tooltip = self:GetPhrase( "SELECT_PLAYER" ),
+								-- Tooltip = "Send Name Change",
+								-- StyleName = "InputGroupEnd",
+								DoClick = function( Button )
+									DebugTraceLog("DoClick")
+									self:Notify( "You clicked SwapTeam.")
+									self.TeamSwap[Button.teamIndex] = true
+									local swapEnabled, swapText = self:FormatSwapText(Button.teamIndex)
+									Button:SetText( swapText )
+									self:OnRequestSwapTeams(Button.teamIndex, true)
+								end,
+								Data = { 
+									teamIndex = teamIndex
+								},
+							},
+							OnBuilt = function( config, Button )
+								-- DebugTraceLog("OnBuilt")
+								-- PrintTable( config )
+								Button.teamIndex = config.Props.Data.teamIndex
+								local swapEnabled, swapText = self:FormatSwapText(Button.teamIndex)
+								Button:SetText( swapText )
+								self:GUI_AddObj( nil, config.ID, Button )
+							end
+						}
+					}
+				}
+
+
+				Rows[ #Rows + 1] = {
+					Class = "Horizontal",
+					Type = "Layout",
+					Props = {
+						AutoSize = UnitVector( Percentage( 96 ), HighResScaled( 32 ) ),
+						--	Spacing( left, up, right, down )
+						Margin = Spacing( 0, 0, 0, HighResScaled( 5 ) ),
+						Fill = false
+					},
+					Children = {
+						{
+							ID = GetTeamID(teamIndex, "ReadyButton"),
+							Class = "Button",
+							Props = {
+								AutoFont = Font,
+								AutoSize = UnitVector( Percentage( 20 ), HighResScaled( 32 ) ),
+								Margin = Spacing( HighResScaled( 32 ), HighResScaled( 5 ), HighResScaled( 5 ), HighResScaled( 5 ) ),
+								Text = StringFormat("Force Team %s Ready", teamIndex),
+								-- Tooltip = self:GetPhrase( "SELECT_PLAYER" ),
+								-- Tooltip = "Send Name Change",
+								-- StyleName = "InputGroupEnd",
+								DoClick = function( Button )
+									self:SendNetworkMessage("SetReady", {ready = true, team=Button.teamIndex, settings=true}, true)
+								end,
+								Data = { 
+									teamIndex = teamIndex
+								},
+							},
+							OnBuilt = function( config, Button )
+								Button.teamIndex = config.Props.Data.teamIndex
+							end
+						},
+						{
+							ID = GetTeamID(teamIndex, "NotReadyButton"),
+							Class = "Button",
+							Props = {
+								AutoFont = Font,
+								AutoSize = UnitVector( Percentage( 20 ), HighResScaled( 32 ) ),
+								Margin = Spacing( HighResScaled( 32 ), HighResScaled( 5 ), HighResScaled( 5 ), HighResScaled( 5 ) ),
+								Text = StringFormat("Force Team %s NOT Ready", teamIndex),
+								-- Tooltip = self:GetPhrase( "SELECT_PLAYER" ),
+								-- Tooltip = "Send Name Change",
+								-- StyleName = "InputGroupEnd",
+								DoClick = function( Button )
+									self:SendNetworkMessage("SetReady", {ready = false, team=Button.teamIndex, settings=true}, true)
+								end,
+								Data = { 
+									teamIndex = teamIndex
+								},
+							},
+							OnBuilt = function( config, Button )
+								Button.teamIndex = config.Props.Data.teamIndex
+							end
+						}						
+					}
+				}
+			end
+
+		end
+
+				local LastRow = Rows[ #Rows ]
+				if LastRow then
+					LastRow.Props.Margin = nil
+				end	
+				
+				local Elements = SGUI:BuildTree( {
+					Parent = Panel,
+					{
+						Class = "Vertical",
+						Type = "Layout",
+						Props = {
+							AutoSize = UnitVector( Percentage( 96 ), Percentage( 80 ) ),
+							Padding = Spacing( SMALL_PADDING, SMALL_PADDING, SMALL_PADDING, SMALL_PADDING ),
+						},
+						Children = {
+							{
+								Class = "Label",
+								Props = {
+									AutoFont = AgencyFBSmall,
+									Anchor = "TopMiddle",
+									TextAlignmentX = GUIItem.Align_Center,
+									TextAlignmentY = GUIItem.Align_Center,
+									-- Text = Locale:GetPhrase( "Core", "TESTING_OPTIONS" ),
+									Text = "DMD-Captains: Options",
+									--Margin = Spacing( 0, 0, 0, SMALL_PADDING ),
+									-- Margin = Spacing( SMALL_PADDING ),
+									Margin = Spacing( SMALL_PADDING, SMALL_PADDING, SMALL_PADDING, SMALL_PADDING ),
+									-- AutoSize = UnitVector( Percentage( 96 ), HighResScaled( 32 ) ),
+									AutoSize = UnitVector( Percentage.ONE_HUNDRED, Units.Auto.INSTANCE ),
+									--AutoSize = UnitVector( Percentage( 96 ), Percentage( 5 ) ),
+								}
+							},
+							{
+								Class = "Column",
+								Props = {
+									Scrollable = true,
+									Fill = true,
+									--Colour = Colour( 0, 0, 0, 1 ),
+									--Colour = Colour( 0, 0, 0, 0 ),
+									--Colour = Colour( 1, 1, 1, 1 ),
+									BackgroundColour = Colour( 0.3, 0.3, 0.3, 1 ),
+									ScrollbarPos = Vector2( 0, 0 ),
+									ScrollbarWidth = HighResScaled( 8 ):GetValue(),
+									ScrollbarHeightOffset = 0
+								},
+								Children = Rows
+							}
+						},
+						OnBuilt = function( Definition, Vertical, Elem )
+							-- can we disable the tab?
+							-- DebugTraceLog("OnBuilt")
+							-- PrintTable( Elem )
+							-- DebugTraceLog("OnBuilt")
+							-- PrintTable( Vertical.Parent )
+							-- DebugTraceLog("OnBuilt")
+							-- PrintTable( Vertical.Parent.Parent )
+						end
+					}
+				} )
+
+
+			end
+		)	
+	-- end
+
 	self.CaptainMenuCreated = true
 
 	self.Logger:Debug( "CaptainMenu Initialise done" )
@@ -542,10 +889,11 @@ function Plugin:PickListAdd( Ent )
 		if pickTeam == 0 and isPickable then
 			Row:SetColumnText( 1, tostring( Ent.steamid ) )
 			Row:SetColumnText( 2, Ent.name )
-			Row:SetColumnText( 3, tostring( Ent.marine ) )
-			Row:SetColumnText( 4, tostring( Ent.alien) )
-			Row:SetColumnText( 5, Plugin:GetTeamName( Ent.team, true ) )
-			Row:SetColumnText( 6, tostring( Ent.pickid ) )
+			Row:SetColumnText( 3, tostring( Max( 0, Ent.skill) ) )
+			Row:SetColumnText( 4, tostring( Ent.marine ) )
+			Row:SetColumnText( 5, tostring( Ent.alien) )
+			Row:SetColumnText( 6, Plugin:GetTeamName( Ent.team, true ) )
+			Row:SetColumnText( 7, tostring( Ent.pickid ) )
 			Row:SetData( "pickid" , Ent.pickid )
 			Row:SetTooltip( Ent.skillText )
 			self.Logger:Trace("Picklist Updated [%s]%s", Ent.pickid, Ent.name )
@@ -573,6 +921,7 @@ function Plugin:PickListAdd( Ent )
 	self.PickRows[ Ent.pickid ] = self.PickList:AddRow(
 				  Ent.steamid
 				, Ent.name
+				, Max( 0, Ent.skill)
 				, Ent.marine
 				, Ent.alien
 				, Plugin:GetTeamName( Ent.team, true )
@@ -874,16 +1223,36 @@ function Plugin:ReceiveHideMouse(Data)
 
 end
 
+function Plugin:FormatSwapText( Team )
+	Team = Team or self.myTeam 
+	local OtherTeam = (Team % 2) + 1
+	local Enabled = false
+	local Text
+	if Team ~= 0 then
+		Enabled = not self.TeamSwap[Team]
+		Text = StringFormat( "%s Swap %s", 
+			self.TeamSwap[Team] and "Pending" 
+				or self.TeamSwap[OtherTeam] and "Approve" 
+				or "Request",
+				self:GetTeamString(OtherTeam) )
+	else
+		Text = "Swap"
+	end
+	return Enabled, Text
+end
 
 function Plugin:FormatTeamHeading(team)
 	local Text
 
 	if self.myTeam == 0 then
-	-- show Captain names to everyone else for Team Names.
-		Text = StringFormat("Team- %s", self.CaptainNames[team])
-
+		if Plugin.Config.ShowMarineAlienToPlayers then
+			Text = StringFormat("%s (%s)", self.CaptainNames[team], self:GetTeamString(team))
+		else
+			-- show Captain names to everyone else for Team Names.
+			Text = StringFormat("%s", self.CaptainNames[team])	
+		end
 	elseif Plugin.Config.ShowMarineAlienToCaptains then
-		Text = StringFormat("%s (%s)", self.TeamNames[team], self.TeamStrings[team])
+		Text = StringFormat("%s (%s)", self.TeamNames[team], self:GetTeamString(team))
 	else
 		Text = StringFormat("%s", self.TeamNames[team])
 	end
@@ -894,7 +1263,7 @@ end
 -- Update TeamName from SGUI
 function Plugin:UpdateTeamName(Input)
 	self.Logger:Debug( "UpdateTeamName" )
-	teamInput = Input
+	local teamInput = Input
 	if teamInput == nil then
 		teamInput = self:GUI_GetObj( nil, "teamInput" )
 		if not SGUI.IsValid(teamInput)  then
@@ -909,13 +1278,39 @@ function Plugin:UpdateTeamName(Input)
 	if Text and Text:len() > 0
 	and Text ~= self.TeamNames[ self.myTeam]
 	then
-		self:SendNetworkMessage("SetTeamName", {teamname = Text}, true)
+		self:SendNetworkMessage("SetTeamName", {team = self.myTeam, teamname = Text, settings=false}, true)
 		self.Logger:Debug( "Send Team Name %s ", Text )
 		self.TeamNames[self.myTeam] = Text
 		self:GUI_SetText( self.myTeam, "teamLabel", self:FormatTeamHeading(self.myTeam) )
 	end
-
 end
+
+function Plugin:UpdateTeamNameForTeam( Team, Input )
+	self.Logger:Debug( "UpdateTeamNameForTeam %s %s", Team, Input )
+	local teamInput = Input
+	-- if teamInput == nil then
+	-- 	teamInput = self:GUI_GetObj( nil, GetTeamID(Team, "Name") )
+	-- 	if not SGUI.IsValid(teamInput)  then
+	-- 		self.Logger:Debug( "UpdateTeamNameForTeam not IsValid" )
+	-- 	end
+	-- end
+	if not SGUI.IsValid(teamInput) then
+		return
+	end
+	if not (Team == 1 or Team == 2) then return end
+	local Text = teamInput:GetText()
+	self.Logger:Debug( "UpdateTeamName have team %s ", Team  )
+
+	if Text and Text:len() > 0
+	and Text ~= self.TeamNames[ Team ]
+	then
+		self:SendNetworkMessage("SetTeamName", {team = Team, teamname = Text, settings=true}, true)
+		self.Logger:Debug( "Send Team Name %s ", Text )
+		self.TeamNames[ Team ] = Text
+		self:GUI_SetText( Team, "teamLabel", self:FormatTeamHeading(Team) )
+	end	
+end
+
 
 function Plugin:GUI_AddObj( team, name, obj )
 	self.myGUIObjs = self.myGUIObjs or {}
@@ -996,13 +1391,101 @@ function Plugin:OnTradePlayer(PickID)
 	self:SendNetworkMessage("TradePlayer", {pickid = PickID}, true)
 end
 
+function Plugin:OnRequestSwapTeams( Team, FromSettings )
+	self.Logger:Debug("Plugin:RequestSwapTeams")
+	self:SendNetworkMessage("RequestSwapTeams" , {team = Team, settings = FromSettings}, true)
+end
+
+--[[
+	ReceiveTeamSwapRequested
+		receive the request from the other captain to swap teams.
+]] 
+function Plugin:ReceiveTeamSwapRequested(Data)
+	local team = Data.team
+	if not (team == 1 or team == 2) then return end
+	self.Logger:Debug("Plugin:ReceiveTeamSwapRequested %s", team)
+	self.TeamSwap[team] = true
+
+	local SwapTeamButton = self:GUI_GetObj( 0, "SwapTeamButton" )
+	if SGUI.IsValid( SwapTeamButton ) 
+	and SwapTeamButton:GetIsVisible() then
+		self.Logger:Trace( "Update text SwapTeamButton" )
+		local swapEnabled, swapText = self:FormatSwapText()
+		SwapTeamButton:SetEnabled( swapEnabled )
+		SwapTeamButton:SetText( swapText )
+	end
+	SwapTeamButton = self:GUI_GetObj( 0, "ID1TeamSwap" )
+	if SGUI.IsValid( SwapTeamButton ) 
+	and SwapTeamButton:GetIsVisible() then
+		self.Logger:Trace( "Update text ID1TeamSwap" )
+		local swapEnabled, swapText = self:FormatSwapText(1)
+		SwapTeamButton:SetText( swapText )
+	end
+	SwapTeamButton = self:GUI_GetObj( 0, "ID2TeamSwap" )
+	if SGUI.IsValid( SwapTeamButton ) 
+	and SwapTeamButton:GetIsVisible() then
+		self.Logger:Trace( "Update text ID2TeamSwap" )
+		local swapEnabled, swapText = self:FormatSwapText(2)
+		SwapTeamButton:SetText( swapText )
+	end		
+
+	-- The other captain has requested to swap teams.
+	-- set button text to "Approve Swap"
+end
+
+--[[
+	ReceiveSwapTeams
+		Both captains agree to swap teams.
+]] 
+function Plugin:ReceiveSwapTeams(Data) 
+	self.Logger:Debug("Plugin:ReceiveSwapTeams")
+	self.TeamSwap = {false, false}
+	self.Team1IsMarines = Data.team1marines
+	if self.Team1IsMarines then
+		self.TeamIndex = {1, 2}
+	else
+		self.TeamIndex = {2, 1}
+	end
+	-- fix team names.
+	self:GUI_SetText( 1, "teamLabel", self:FormatTeamHeading(1) )
+	self:GUI_SetText( 2, "teamLabel", self:FormatTeamHeading(2) )
+	if self.myTeam ~= 0 then
+		self:GUI_SetText( nil, "teamInput", self.TeamNames[self.myTeam] )
+		self:GUI_SetText( nil, "ListTitleTeamText", self:GetTeamString(self.myTeam) )
+	end
+	self:GUI_SetText( nil, "ID1TeamName", self.TeamNames[1] )
+	self:GUI_SetText( nil, "ID2TeamName", self.TeamNames[2] )
+
+	--self:GUI_SetText( nil, "SwapTeamButton", "Swap Teams" )	
+	local SwapTeamButton = self:GUI_GetObj( 0, "SwapTeamButton" )
+	if SGUI.IsValid( SwapTeamButton ) 
+	and SwapTeamButton:GetIsVisible() then
+		local swapEnabled, swapText = self:FormatSwapText()
+		SwapTeamButton:SetEnabled( swapEnabled )
+		SwapTeamButton:SetText( swapText )
+	end
+	SwapTeamButton = self:GUI_GetObj( 0, "ID1TeamSwap" )
+	if SGUI.IsValid( SwapTeamButton ) 
+	and SwapTeamButton:GetIsVisible() then
+		local swapEnabled, swapText = self:FormatSwapText(1)
+		SwapTeamButton:SetText( swapText )
+	end
+	SwapTeamButton = self:GUI_GetObj( 0, "ID2TeamSwap" )
+	if SGUI.IsValid( SwapTeamButton ) 
+	and SwapTeamButton:GetIsVisible() then
+		local swapEnabled, swapText = self:FormatSwapText(2)
+		SwapTeamButton:SetText( swapText )
+	end	
+
+
+end
+
 
 function Plugin:Cleanup()
 	self.Logger:Debug( "Plugin:Cleanup" )
 	self:ResetTeamNames( )
 	self:CaptainMenuCleanup()
 	self.BaseClass.Cleanup(self)
-
 end
 
 function Plugin:CaptainMenuCleanup()
@@ -1032,8 +1515,6 @@ function Plugin:CaptainMenuCleanup()
 	self.TeamList = nil
 	self.TeamListSort = nil
 	self.TeamListRows= nil
-	self.TeamTitles = nil
-	self.myTeamInput = nil
 
 end
 
@@ -1046,13 +1527,10 @@ function Plugin:ReceiveStartCaptains(Data)
 	self.Team1IsMarines = Data.team1marines
 
 	if self.Team1IsMarines then
-		self.TeamStrings = {"Marines", "Aliens"}
 		self.TeamIndex = {1, 2}
 	else
-		self.TeamStrings = {"Aliens", "Marines"}
 		self.TeamIndex = {2, 1}
 	end
-
 	self.TeamNames[1] = self.dt.Team1Name
 	self.TeamNames[2] = self.dt.Team2Name
 
@@ -1073,6 +1551,7 @@ function Plugin:ReceiveStartCaptains(Data)
 	StartSoundEffect("sound/NS2.fev/marine/voiceovers/commander/online", 3)
 
 end
+
 
 
 function Plugin:ReceiveCaptainsMatchStart(Data)
@@ -1101,6 +1580,25 @@ function Plugin:ReceiveCaptainsMatchComplete(Data)
 		Plugin:CaptainMenuCleanup()
 	end
 
+end
+
+function Plugin:RequestCaptainOptions( )
+	self:SendNetworkMessage( "RequestCaptainOptions", {}, true )
+end
+
+function Plugin:ReceiveCaptainOptions( Data )
+	self.Logger:Trace( "ReceiveCaptainOptions")
+	if self.Logger:IsTraceEnabled() then
+		self.Logger:Trace( "ReceiveCaptainOptions Print")
+		PrintTable( Data )
+	end
+	local oldOpetions = Cop
+	self.CaptainOptions = {
+		ShowSettings = Data.ShowSettings 
+	}
+	if self.CaptainOptions.ShowSettings == true and self.CaptainMenuCreated then
+		-- force new tab? or enable Settings.
+	end
 end
 
 function Plugin:ReceiveEndCaptains(Data)
@@ -1152,6 +1650,7 @@ function Plugin:ReceivePlayerStatus(Data)
 	then
 		self.myTeam = tonumber(Data.pick)
 		self.myPickid = Data.pickid
+		self.otherTeam = (self.myTeam % 2) + 1
 	end
 
 	if Data.isCaptain and Data.pick > 0 then
@@ -1246,7 +1745,7 @@ function Plugin:Captain_GUIScoreboardUpdateTeam(  scoreboard, updateTeam  )
 	if not (teamNumber == 1 or teamNumber == 2) then return end
 	if not self.MatchStart then return end
 
-	local nameIndex = self.TeamIndex[teamNumber]
+	local nameIndex = self:GetTeamIndex(teamNumber)
 	local originalHeaderText = teamNameGUIItem:GetText()
 	local newTeamName = self.TeamNames[nameIndex]
 	local teamHeaderText
@@ -1264,7 +1763,9 @@ function Plugin:Captain_GUIScoreboardUpdateTeam(  scoreboard, updateTeam  )
 	teamNameGUIItem:SetText(teamHeaderText)
 
 end
-
+--[[
+	Allow the Captain window to Hide when Tab is pressed to view the scoreboard.
+]]
 function Plugin:Captain_GUIScoreboardSendKeyEvent(  Scoreboard, Key, Down )
 	if self.dt.Suspended then return end
 -- This will run on Every keypress.
@@ -1344,10 +1845,6 @@ function Plugin:FadeOut( )
 end
 
 
-
-
-
-
 function Plugin:ReceivePickNotification(Data)
 	Client.WindowNeedsAttention()
 
@@ -1394,12 +1891,30 @@ function Plugin:ResetTeamNames()
 
 end
 
+function Plugin:GetTeamIndex( team )
+	if self.TeamIndex[1] == team then
+		return 1
+	elseif self.TeamIndex[2] == team then
+		return 2
+	end
+end
+function Plugin:GetMarineName( )
+	return self.TeamNames[self:GetTeamIndex(1)]
+end
+function Plugin:GetAlienName( )
+	return self.TeamNames[self:GetTeamIndex(2)]	
+end
+function Plugin:GetTeamString( team )
+	-- TeamStrings are also translated. But in this case its the Captain Index we are converting.
+	return self.TeamStrings[self:GetTeamIndex(team)]
+end
+
 function Plugin:SetTeamNames( MarineName, AlienName )
 
 	if MarineName == nil
 	or AlienName == nil then
-		Shared.ConsoleCommand( StringFormat( "teams \"%s\" \"%s\"", self.TeamNames[self.TeamIndex[1]], self.TeamNames[self.TeamIndex[2]] ) )
-		self.Logger:Info( "Captains Mode: teams \"%s\" \"%s\"" , self.TeamNames[self.TeamIndex[1]], self.TeamNames[self.TeamIndex[2]] )
+		Shared.ConsoleCommand( StringFormat( "teams \"%s\" \"%s\"", self:GetMarineName(), self:GetAlienName() ) )
+		self.Logger:Info( "Captains Mode: teams \"%s\" \"%s\"" , self:GetMarineName(), self:GetAlienName() )
 		return
 	end
 
@@ -1461,6 +1976,5 @@ function Plugin:ReceiveTeamNamesNotification(Data)
 		}
 	)
 end
-
 
 Shine.LoadPluginModule( "logger.lua", Plugin )

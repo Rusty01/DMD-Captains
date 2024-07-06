@@ -10,6 +10,7 @@ Plugin.ConfigName = "CaptainsMode.json"
 
 Plugin.DefaultConfig = {
 	Captains = false,
+	CaptainsNight = false,
 	AllowTesting = false,
 	AutoRemoveBots = true,
 	AutoDisableVoteRandom = true,
@@ -18,6 +19,7 @@ Plugin.DefaultConfig = {
 	AnnouncePlayerNames = true,
 	AllowPlayersToViewTeams = true,
 	ShowMarineAlienToCaptains = true,
+	ShowMarineAlienToPlayers = true,
 	CountdownSeconds = 60,
 	LogLevel = "INFO",
 	BlockedVotesMinPlayer = 12
@@ -58,6 +60,8 @@ function Plugin:SetupDataTable()
 
 	self:AddDTVar( "boolean", "Captains", false )
 	self:AddDTVar( "boolean", "Suspended", false )
+	self:AddDTVar( "boolean", "CaptainsNight", false )
+	self:AddDTVar( "boolean", "TestingCaptains", false )
 	self:AddDTVar( "string (255)", "Team1Name", "Marines" )
 	self:AddDTVar( "string (255)", "Team2Name", "Aliens" )
 	self:AddDTVar( "integer (0 to 2)", "CaptainTurn", "0" )
@@ -67,6 +71,10 @@ function Plugin:SetupDataTable()
 	self:AddNetworkMessage("PickPlayer", {pickid = "string (32)"}, "Server")
 	self:AddNetworkMessage("TradePlayer", {pickid = "string (32)"}, "Server")
 
+	self:AddNetworkMessage("RequestSwapTeams", {team = 'integer (0 to 2)', settings="boolean"}, "Server")
+	self:AddNetworkMessage("TeamSwapRequested", {team = 'integer (0 to 2)'}, "Client")
+	self:AddNetworkMessage("SwapTeams", {team1marines = "boolean"}, "Client")
+
 	self:AddNetworkMessage("StartCaptains", {team1marines = "boolean"}, "Client")
 	self:AddNetworkMessage("EndCaptains", {}, "Client")
 	self:AddNetworkMessage("CaptainsMatchStart", {}, "Client")
@@ -74,8 +82,8 @@ function Plugin:SetupDataTable()
 
 	self:AddNetworkMessage("RequestEndCaptains", {}, "Server")
 
-	self:AddNetworkMessage("SetTeamName", {teamname = "string (255)"}, "Server")
-	self:AddNetworkMessage("SetReady", {ready = "boolean"}, "Server")
+	self:AddNetworkMessage("SetTeamName", {team = 'integer (0 to 2)', teamname = "string (255)", settings="boolean"}, "Server")
+	self:AddNetworkMessage("SetReady", {ready = "boolean", team = 'integer (0 to 2)', settings="boolean"}, "Server")
 	self:AddNetworkMessage("UnsetReady", {}, "Client")
 
 	self:AddNetworkMessage("PickNotification", {text = "string (255)"}, "Client")
@@ -101,6 +109,12 @@ function Plugin:SetupDataTable()
 	self:AddTranslatedError( "JOIN_TEAMS_CAPTAINS_NIGHT", { 
 		team = self:GetNameNetworkField()
 	} )	
+
+	local CaptainOptions = {
+		ShowSettings = "boolean"
+	}
+	self:AddNetworkMessage( "CaptainOptions" , CaptainOptions, "Client" )
+	self:AddNetworkMessage( "RequestCaptainOptions" , {}, "Server" )
 
 end
 

@@ -5,8 +5,10 @@
 local Plugin = ...
 
 local Shine = Shine
-local ChatName = "Rematch"
+local Notify = Shared.Message
+local TableConcat = table.concat
 
+local ChatName = "Rematch"
 Plugin.CaptainsMod = "captainsmode"
 
 local GetAllPlayers = Shine.GetAllPlayers
@@ -14,6 +16,9 @@ local TableSort = table.sort
 local StringFormat = string.format
 local tostring = tostring
 
+local TeamHistoryUtil = {}
+
+Plugin.TeamHistoryFile = "config://shine/temp/rematch_team_history.json"
 
 -- Block these votes when Rematch is running.
 Plugin.BlockedEndOfMapVotes = {
@@ -80,6 +85,20 @@ function Plugin:Notify(Message, Color)
 	end
 
 	Shine:NotifyDualColour(nil, 131, 0, 255, ChatName .. ": ", R, G, B, Message)
+end
+
+function Plugin:NotifyClient(Client, Message, Color)
+	local ChatName = "Rematch"
+	local R, G, B = 255, 255, 255
+	if Color == "red" then
+		R, G, B = 255, 0, 0
+	elseif Color == "yellow" then
+		R, G, B = 255, 183, 2
+	elseif Color == "green" then
+		R, G, B = 79, 232, 9
+	end
+
+	Shine:NotifyDualColour(Client, 131, 0, 255, ChatName .. ": ", R, G, B, Message)
 end
 function Plugin:TranslatedNotify(Player, Message, Color)
 	local R, G, B = 255, 255, 255
@@ -168,6 +187,8 @@ function Plugin:Initialise()
 	self.dt.Rematch = (Plugin.Config.Rematch ~= false)
 	self.dt.Suspended = (self.dt.Rematch ~= true)
 
+	self:LoadTeamHistory()
+
 	self:ResetState()
 	self:CreateCommands()
 
@@ -179,9 +200,6 @@ function Plugin:ResetState()
 	self.Logger:Debug( "Server ResetState" )
 	self:DestroyAllTimers()
 
-	self.Players = {}
-	self.TeamNames = {"Marines", "Aliens"}
-
 	self.MovingPlayers = false
 	self.GameStarted = false
 
@@ -192,19 +210,7 @@ function Plugin:ResetState()
 	self.RematchTrigger = false
 	self.RematchStartComplete = false
 
-	-- check current game status???
 	self.PendingGameStatus = true
-	-- --if GetGamerules():GetGameStarted() then
-	-- local gm = GetGamerules()
-	-- if gm then
-	-- 	if gm:GetGameStarted() then
-	-- 		self.GameStarted = true
-	-- 	end
-	-- end
-
-	-- if GetGamerules():GetGameStarted() then		
-	-- 	self.GameStarted = true
-	-- end
 
 	if not self.VoteMap_CheckMapLimitsAfterRoundEnd then
 		self:OverrideMapVote()
@@ -214,89 +220,171 @@ end
 
 function Plugin:CreateCommands()
 
-
-	-- if self.dt.Suspended then 
-	-- 	self:NotifyState( Client );
-	-- 	return
-	-- end
-
+	--[[
+		sh_rematchinfo reports info to the client about rematch.
+	]]
+	self:BindCommand("sh_rematchinfo", "rematchhelp", function (Client, Enable, Save)
+		self:NotifyClient( Client, "Rematch mod is loaded.")
+		if self:IsRematchEnabled( "Rematch" ) then
+			self:NotifyClient( Client, "Rematch is enabled for the next round. Admins use \"!rematch false\" or \"sh_rematch false\" to deactivate Rematch.")
+		else
+			self:NotifyClient( Client, "Admins use !rematch or sh_rematch to activate Rematch for the next round.")
+		end
+		self:NotifyClient( Client, "Admins use !rematchforce [current, last, prior] to Force a Rematch right now with the specified team set. (console sh_rematch_force [current, last, prior])")
+		self:NotifyClient( Client, "Admins use !rematchstatus [current, last, prior] to review the team set. (console sh_rematch_status [current, last, prior])")
+		self:NotifyClient( Client, "Admins use !rematchupdate to rebuild the current team set with the current teams. (console sh_rematch_update)")
+		self:NotifyClient( Client, "Admins use sh_rematch_autodisable to change the setting for Rematch to disable itself on the next map.")
+	end)
+	:Help("Report info on Rematch mod.")
 
 	--[[
 		The sh_rematch allows admins to activate rematch without a vote. 
 	]]
-	local RematchCommand =self:BindCommand("sh_rematch", nil, function (Client, Enable, Save)
-		Enabled = Enabled and true or false
+	self:BindCommand("sh_rematch", "rematch", function (Client, Enable, Save)
+		Enable = Enable and true or false
 		Save = Save and true or false
-		self:SetRematchEnabled( "Rematch", Enabled, not Save )
+		self:SetRematchEnabled( "Rematch", Enable, not Save )
 	end)
-	RematchCommand:Help("Swap teams after games over and start another game.")
-	RematchCommand:AddParam{ Type = "boolean", Optional = true, Default = false, Help = "Enabled" }
-	RematchCommand:AddParam{ Type = "boolean", Optional = true, Default = false, Help = "save" }
+	:Help("Swap teams after games over and start another game.")
+	:AddParam{ Type = "boolean", Optional = true, Default = false, Help = "Enabled" }
+	:AddParam{ Type = "boolean", Optional = true, Default = false, Help = "save" }
 
-	self:BindCommand("sh_rematch_autodisable", nil, function (client) 
+	--[[
+		sh_rematch_autodisable - make Rematch turn off after a map load.
+	]]		
+	self:BindCommand("sh_rematch_autodisable", nil, function (client, Enable) 
+		Enable = Enable and true or false
 		local feature = "AutoDisableSelf"
-		local NewState = not self:IsRematchEnabled( feature)
-		self:SetRematchEnabled( feature, NewState )
-		self:NotifyRematchState( feature, NewState, client )
-	end ):Help("Toggle Rematch Mod Auto Self Disable")
+		local CurrentState = self:IsRematchEnabled( feature)
+		if Enable == CurrentState then
+			self:NotifyRematchState( feature, CurrentState, client )
+			return
+		end
+		self:SetRematchEnabled( feature, Enable )
+		self:NotifyRematchState( feature, Enable, client )
+	end )
+	:Help("Update Auto Self Disable setting for Rematch")
+	:AddParam{ Type = "boolean", Optional = true, Default = true, Help = "Enable" }
 
-	self:BindCommand("sh_rematch_force", nil, function(client) 
-		-- self:RematchManual() < has issue with teams arrays not being arrays.
+	--[[
+		rematchforce - activate rematch without waiting. 
+	]]		
+	self:BindCommand("sh_rematch_force", "rematchforce", function(client, teamSet) 
+		if teamSet =="current" then
+			if not TeamHistoryUtil.IsSet( self.TeamHistory["current"] ) then
+				self:RebuildTeamHistory( client, true )
+			end
+			if not TeamHistoryUtil.IsSet( self.TeamHistory["current"] ) then
+				self:NotifyClient( client, "Team Set current is not loaded. Is anyone on the teams?")
+				return
+			end			
+		elseif teamSet == "last" then
+			if not (TeamHistoryUtil.IsSet( self.TeamHistory["current"] )
+			or TeamHistoryUtil.IsSet( self.TeamHistory["last"] )) then
+				self:NotifyClient( client, "Team Set last is not loaded.")
+				return
+			end	
+
+		elseif teamSet == "prior" then
+			if not TeamHistoryUtil.IsSet( self.TeamHistory["prior"] ) then
+				self:NotifyClient( client, "Team Set prior is not loaded.")
+				return
+			end				
+			TeamHistoryUtil.Copy( self.TeamHistory["prior"], self.TeamHistory["current"] ) 			
+		else 
+			self:NotifyClient( client, "Invalid team set. Allowed: current, last, prior", "red")
+			return
+		end
+
 		self.ProcessForceRematch = true
 		if self.dt.Suspended then 
 			self:SetRematchEnabled( "Rematch", true, true )
 		end		
 		self.ProcessRematchStart = true
-	end ):Help("Attempt to Force Rematch using last game player list.")
+	end)
+	:Help("Attempt to Force Rematch using last game player list.")
+	:AddParam{ Type = "string", Optional = true, Default = "last", Help = "current, last, prior" }
 
-	self:BindCommand("sh_rematchcheck", nil, function (Client)
-		
-		self:NotifyState( Client );
 
-		if 	self:IsRematchEnabled( "Rematch" ) then
-			self.Logger:Debug( "Rematch is active" )
-			--self:Notify( "Rematch is active", "yellow")	
-
-			self:SetRematchEnabled( "Rematch", false, true )
-		else
-			self.Logger:Debug( "Rematch is inactive" )
-			--self:Notify( "Rematch is inactive", "yellow")	
-
-			self:SetRematchEnabled( "Rematch", true, true )
+	self:BindCommand("sh_rematch_status", "rematchstatus", function(client, teamSet) 
+		local Message = {}
+		if teamSet =="current" then
+			self:PrintTeamHistorySet( Message , self.TeamHistory["current"] )
+		elseif teamSet == "last" then
+			if TeamHistoryUtil.IsSet( self.TeamHistory["current"] ) then
+				self:PrintTeamHistorySet( Message , self.TeamHistory["current"] )
+			elseif TeamHistoryUtil.IsSet( self.TeamHistory["last"] ) then
+				self:PrintTeamHistorySet( Message , self.TeamHistory["last"] )
+			end			
+		elseif teamSet == "prior" then
+			self:PrintTeamHistorySet( Message , self.TeamHistory["prior"] )
+		else 
+			self:NotifyClient( client, "Invalid team set. Allowed: current, last, prior", "red")
+			return
 		end
-
-	end
-	, true ):Help("Test rematch function.")		
-
-	self:BindCommand("sh_rematchtest", "rematchtest", function (Client)		
-		self:RematchPlayerBuild( Client );
-	end
-	, true ):Help("Test rematch function.")		
+		self:NotifyClient( client, TableConcat( Message, "\n" ) )
+		for i = 1, #Message do
+			ServerAdminPrint( client, Message[ i ] )
+		end
+	end, true)
+	:Help("Report Rematch team status.")
+	:AddParam{ Type = "string", Optional = true, Default = "last", Help = "current, last, prior" }
 
 end
-
-
-
-function Plugin:StartRematch()
-	local GameIDs = Shine.GameIDs
-	self.Logger:Debug( "Server Start Rematch" )
-
-	-- Send Player:client to  everyone
-	self.Logger:Debug( "Server Start Rematch : Send Players" )
-	for Client, ID in GameIDs:Iterate() do
-		--self:PlayerUpdate( Client )
-	end	
-end
-
 
 function Plugin:StartTeams()
+
+	local TeamHistory = self.TeamHistory["current"]
+	if not TeamHistoryUtil.IsSet( TeamHistory ) then
+		TeamHistory = self.TeamHistory["last"]
+	end
+	if not TeamHistoryUtil.IsSet( TeamHistory ) then
+		TeamHistoryUtil.Copy(self.TeamHistory["prior"], self.TeamHistory["current"] )
+		TeamHistory = self.TeamHistory["current"]
+	end
+	if not TeamHistoryUtil.IsSet( TeamHistory ) then
+		self:Notify( "Rematch Failed. No teams found", "red" )
+		self.Logger:Info( "Rematch Failed. No teams found" )
+		return
+	end
+
 
 	local Gamerules = GetGamerules()
 
 	self:Notify( "Rematch Starting: StartTeams", "green" )
 
-	local Teams = {2, 1}
-	
+	-- Force game back to WarmUp
+	if Gamerules:GetGameState() >= kGameState.Started then
+		Gamerules:SetGameState( kGameState.WarmUp )
+	end
+
+	--this forces everyone to the ready room
+	local Enabled, MapVote = Shine:IsExtensionEnabled( "mapvote" )
+	if Enabled then
+		self.Logger:Trace( "Server ForcePlayersIntoReadyRoom" )
+		MapVote:ForcePlayersIntoReadyRoom()
+	else
+		-- fallback to to console command. 
+		self.Logger:Trace( "mapvote not found. fallback: sh_rr @alien,@marine" )
+		Shared.ConsoleCommand("sh_rr @alien,@marine")
+	end	
+
+	local Team1String = Plugin:GetTeamName( 1, true )
+	local Team2String = Plugin:GetTeamName( 2, true )
+	local Team1Name = TeamHistory.Team1Name
+	local Team2Name = TeamHistory.Team2Name
+	-- Swap Team Names
+	if Team1Name ~= Team1String then 
+		self.dt.Team2Name = Team1Name;
+	else
+		self.dt.Team2Name = Team2String
+	end
+	if Team2Name ~= Team2String then		
+		self.dt.Team1Name = Team2Name;
+	else
+		self.dt.Team1Name = Team1String
+	end
+
 	self.MovingPlayers = true
 	if not self.VoteRandom_ShuffleTeams then
 		self:OverrideShuffleTeams()
@@ -305,35 +393,27 @@ function Plugin:StartTeams()
 		self:OverrideMapVote()
 	end
 
-	-- Start the game
-	for pickid, Player in pairs(self.Players) do
-		if Player.team == 1 or Player.team == 2 then
-			--local client = Shine.GetClientByNS2ID(SteamID)
-			local client = Player.Client
-			if client == nil then
-				-- added this because its required when using BOTS
-				client = Shine.GetClientByName(Player.name)
-			end
-
-			if Shine:IsValidClient( client ) then
-				local PlayerObj = client and client:GetControllingPlayer()
-				if PlayerObj ~= nil then
-					Gamerules:JoinTeam(PlayerObj, Teams[Player.team], true, true)
-				else
-					Shine:NotifyError(nil,string.format("Player %s not found", Player.name))
-				end
+	local newTeam = 2
+	for SteamId in TeamHistory.Team1:Iterate() do
+		local client = Shine.GetClientByNS2ID( SteamId )
+		if Shine:IsValidClient( client ) then
+			local PlayerObj = client and client:GetControllingPlayer()
+			if PlayerObj ~= nil then
+				Gamerules:JoinTeam(PlayerObj, newTeam, true, true)
 			else
-				-- Most Likely the Bots were already removed from the server
-				-- So lets just add a new bot for each bot we had. 
-				if Player.isBot == true then
-					if Player.isCommander ~= true then
-						OnConsoleAddBots( nil, 1, Teams[Player.team] )
-					else
-						OnConsoleAddBots( nil, 1, Teams[Player.team], "com" )
-						--Set if we added commander bots.
-						Gamerules.removeCommanderBots = true						
-					end
-				end
+				Shine:NotifyError(nil,string.format("Player %s not found", SteamId))
+			end
+		end
+	end
+	newTeam = 1
+	for SteamId in TeamHistory.Team2:Iterate() do
+		local client = Shine.GetClientByNS2ID( SteamId )
+		if Shine:IsValidClient( client ) then
+			local PlayerObj = client and client:GetControllingPlayer()
+			if PlayerObj ~= nil then
+				Gamerules:JoinTeam(PlayerObj, newTeam, true, true)
+			else
+				Shine:NotifyError(nil,string.format("Player %s not found", SteamId))
 			end
 		end
 	end
@@ -343,8 +423,16 @@ function Plugin:StartTeams()
 	-- Just close the GUI for now but don't reset state
 	self:SendNetworkMessage(nil, "RematchMatchStart", {}, true)
 
+	self:ReportTeams( TeamHistory );
 	self:StartGame()
 
+	-- Rotate and Save teams after we use it to start.
+	if TeamHistoryUtil.IsSet( self.TeamHistory["current"] ) then
+		TeamHistoryUtil.Rotate(self.TeamHistory["last"], self.TeamHistory["prior"] )
+		TeamHistoryUtil.Rotate(self.TeamHistory["current"], self.TeamHistory["last"] )
+	end
+	TeamHistoryUtil.Reset( self.TeamHistory["current"] )
+	self:SaveTeamHistory()
 end
 
 function Plugin:StartGame()
@@ -435,9 +523,14 @@ function Plugin:SetGameState(Gamerules, State, OldState)
 	and (State == kGameState.WarmUp) 
 	then
 		-- Delay Next Match for a few seconds for the Scores screen to appear
-		Plugin:SimpleTimer( 5, function(Timer)
-			self.ProcessRematchStart = true
-		end)
+		self:CreateTimer( 
+			"RematchStartTimer",
+			5,
+			1,
+			function( Timer)
+				self.ProcessRematchStart = true
+			end
+		)
 	end
 
 	-- trigger end on next think.
@@ -455,10 +548,6 @@ function Plugin:SetGameState(Gamerules, State, OldState)
 		self.RematchTrigger = true
 		-- Okay to turn it off.
 		self.GameStarted = false
-		-- Delay Next Match for a few seconds for the Scores screen to appear
-		-- Plugin:SimpleTimer( 5, function(Timer)
-		-- 	self:StartTeams()
-		-- end)
 		return
 	end
 	if self.GameStarted
@@ -492,6 +581,12 @@ function Plugin:SetGameState(Gamerules, State, OldState)
 				true
 			)
 			self.RematchStartComplete = true
+
+			self:CreateTimer( "PostGameStartRematch" , 5, 1, function(Timer)
+				self.Logger:Info( "Rematch Game Started" )
+				self:SetRematchEnabled( "Rematch", false, true )
+			end		
+			)
 		end
 
 		return
@@ -506,94 +601,209 @@ end
 
 function Plugin:EndGame( Gamerules, WinningTeam )
 	self.Logger:Debug( "Plugin:EndGame" )
-
-	-- if self.RematchStartComplete then
-	-- 	self.BlockMapVote = false
-	-- end
-
-	self:RematchPlayerBuild( nil )
+	self:RebuildTeamHistory( )
 end
 
---function Plugin:RematchManual( )
--- 	if self.dt.Suspended then 
--- 		self:SetRematchEnabled( "Rematch", true, true )
--- 	end
+function Plugin:MapChange()
+	self.Logger:Trace( "MapChange" )
+	if not self.Config.RestoreTeamHistoryAfterMapchange then return end
 
--- 	local Enabled, Captains = Shine:IsExtensionEnabled( Plugin.CaptainsMod )
--- 	if not Enabled then
--- 		return
--- 	end
-	
--- 	local Team1String = Plugin:GetTeamName( 1, true )
--- 	local Team2String = Plugin:GetTeamName( 2, true )
--- 	local Team1Name = Captains:GetTeam1Name()
--- 	local Team2Name = Captains:GetTeam2Name()
+	if TeamHistoryUtil.IsSet( self.TeamHistory["current"] ) then
+		TeamHistoryUtil.Rotate(self.TeamHistory["last"], self.TeamHistory["prior"] )
+		TeamHistoryUtil.Rotate(self.TeamHistory["current"], self.TeamHistory["last"] )
+	end
+	self:SaveTeamHistory()
+end
 
--- 	local LastTeams = Captains:GetLastTeams()
--- 	self.Players = {}
-	
--- 	-- Swap Team Names
--- 	if Team1Name ~= Team1String then 
--- 		self.dt.Team2Name = Team1Name;
--- 	else
--- 		self.dt.Team2Name = Team2String
--- 	end
--- 	if Team2Name ~= Team2String then		
--- 		self.dt.Team1Name = Team2Name;
--- 	else
--- 		self.dt.Team1Name = Team1String
--- 	end
+function Plugin:RebuildTeamHistory( NoRotate )
+	NoRotate = NoRotate and true or false
 
--- 	local playerSet = false
--- 	for team, Teamlist in pairs(LastTeams) do
--- 		for id, Player in pairs( TeamList ) do
--- 			-- process valid clients. ignores bots.
--- 			if Shine:IsValidClient( Player.Client ) then
--- 				self:PlayerUpdate( Player.Client )
--- 				local pickid = self:GetPickId(Player.Client) 
--- 				self.Players[pickid].TeamNumber = team
--- 				self.Players[pickid].pick = team
--- 				playerSet = true
--- 			end
--- 		end
--- 	end
--- 	if playerSet == true then 
--- 		self.ProcessRematchStart = true
--- 		self:TranslatedNotify(nil, "REMATCH_FORCE", "red")
--- 	end
--- end
-
-function Plugin:RematchPlayerBuild( Caller )
-
-	local GameIDs = Shine.GameIDs
-	self.Players = {}
-
-	local Team1String = Plugin:GetTeamName( 1, true )
-	local Team2String = Plugin:GetTeamName( 2, true )
-	local Team1Name = Team1String
-	local Team2Name = Team2String
+	if not NoRotate then 
+		TeamHistoryUtil.Rotate(self.TeamHistory["last"], self.TeamHistory["prior"] )
+		TeamHistoryUtil.Rotate(self.TeamHistory["current"], self.TeamHistory["last"] )
+	end
+	TeamHistoryUtil.Reset( self.TeamHistory["current"] )
+	local TeamHistory = self.TeamHistory["current"]
 
 	local Enabled, Captains = Shine:IsExtensionEnabled( Plugin.CaptainsMod )
 	if Enabled then
-		Team1Name = Captains:GetTeam1Name()
-		Team2Name = Captains:GetTeam2Name()
-	end
-	-- Swap Team Names
-	if Team1Name ~= Team1String then 
-		self.dt.Team2Name = Team1Name;
-	else
-		self.dt.Team2Name = Team2String
-	end
-	if Team2Name ~= Team2String then		
-		self.dt.Team1Name = Team2Name;
-	else
-		self.dt.Team1Name = Team1String
-	end
+		TeamHistory.Team1Name = Captains:GetTeam1Name()
+		TeamHistory.Team2Name = Captains:GetTeam2Name()
+	end	
 
+	local GameIDs = Shine.GameIDs
 	for Client, ID in GameIDs:Iterate() do
-		self:PlayerUpdate( Client )
+		if not Client:GetIsVirtual() then
+			local Player       = Client:GetControllingPlayer()
+			local SteamID      = Client:GetUserId()
+			local PlayerName   = Player:GetName()
+			local TeamNumber   = Player:GetTeamNumber()
+			self.Logger:Trace( "Server Player Update (%s) %s [%s]", SteamID, PlayerName, TeamNumber )
+			if TeamNumber == kTeam1Index then
+				TeamHistory.Team1:Add( SteamID )
+			elseif TeamNumber == kTeam2Index then
+				TeamHistory.Team2:Add( SteamID )
+			end
+		end
+	end
+end
+
+function Plugin:SaveTeamHistory()
+	self.Logger:Trace( "SaveTeamHistory" )
+    local LastTeams = {
+		TimeStamp = Shared.GetSystemTime(),
+		teamset = { }
+    }
+	LastTeams.teamset["last"] = {
+		Team1Name = self.TeamHistory["last"].Team1Name,
+		Team1 = self.TeamHistory["last"].Team1:AsList(),
+		Team2Name = self.TeamHistory["last"].Team2Name,
+		Team2 = self.TeamHistory["last"].Team2:AsList()
+	}
+	LastTeams.teamset["prior"] = {
+		Team1Name = self.TeamHistory["prior"].Team1Name,
+		Team1 = self.TeamHistory["prior"].Team1:AsList(),
+		Team2Name = self.TeamHistory["prior"].Team2Name,
+		Team2 = self.TeamHistory["prior"].Team2:AsList()
+	}
+    Shine.SaveJSONFile( LastTeams, self.TeamHistoryFile )
+end
+
+function TeamHistoryUtil.New( )
+	local TeamHistory = {} 
+	TeamHistory.Team1 = Shine.Set()
+	TeamHistory.Team2 = Shine.Set()
+	TeamHistory.Team1Name = Shine:GetTeamName( 1, true )
+	TeamHistory.Team2Name = Shine:GetTeamName( 2, true )
+	return TeamHistory
+end
+
+function TeamHistoryUtil.Reset( TeamHistory )
+	TeamHistory.Team1:Clear()
+	TeamHistory.Team2:Clear()
+	TeamHistory.Team1Name = Shine:GetTeamName( 1, true )
+	TeamHistory.Team2Name = Shine:GetTeamName( 2, true )
+end
+
+function TeamHistoryUtil.Copy( FromTeamSet, ToTeamSet)
+	TeamHistoryUtil.Reset( ToTeamSet )
+	ToTeamSet.Team1Name = FromTeamSet.Team1Name
+	ToTeamSet.Team2Name = FromTeamSet.Team2Name
+	ToTeamSet.Team1:AddAll( FromTeamSet.Team1:AsList() )
+	ToTeamSet.Team2:AddAll( FromTeamSet.Team2:AsList() )
+end
+
+function TeamHistoryUtil.Rotate( FromTeamSet, ToTeamSet )
+	if FromTeamSet.Team1:GetCount() > 0 or FromTeamSet.Team2:GetCount() > 0 then
+		TeamHistoryUtil.Copy( FromTeamSet, ToTeamSet)
+	end
+end
+
+function TeamHistoryUtil.IsSet( TeamSet )
+	return TeamSet.Team1:GetCount() > 0 or TeamSet.Team2:GetCount() > 0;
+end
+
+function Plugin:LoadTeamHistoryTeam( TeamSet, TeamHistory )
+	if TeamHistory.Team1Name then
+		TeamSet.Team1Name = TeamHistory.Team1Name
+	end
+	if TeamHistory.Team2Name then
+		TeamSet.Team2Name = TeamHistory.Team2Name
+	end	
+	if TeamHistory.Team1 then
+		TeamSet.Team1:AddAll(TeamHistory.Team1 ) 
+
+	end
+	if TeamHistory.Team2 then
+		TeamSet.Team2:AddAll(TeamHistory.Team2 ) 
+	end
+end
+
+function Plugin:LoadTeamHistory( )
+	self.Logger:Trace( "LoadTeamHistory")
+
+	self.TeamHistory = {}
+	self.TeamHistory["last"] = TeamHistoryUtil.New()
+	self.TeamHistory["prior"] = TeamHistoryUtil.New()
+	self.TeamHistory["current"] = TeamHistoryUtil.New()
+
+	if not self.Config.RestoreTeamHistoryAfterMapchange then return end
+
+	local TeamHistory = Shine.LoadJSONFile( self.TeamHistoryFile ) or {}
+	local now = Shared.GetSystemTime()
+
+	local TimeStamp = TeamHistory.TimeStamp
+	TimeStamp = now
+	if not TimeStamp or tonumber( TimeStamp ) + self.Config.TeamHistoryLifeTime < now then
+		self.Logger:Trace( "LoadTeamHistory History Expired" )		
+		return
+	end	
+	self.Logger:Trace( "LoadTeamHistory File Read" )
+
+	if TeamHistory.teamset["prior"] then 
+		self:LoadTeamHistoryTeam( self.TeamHistory["prior"], TeamHistory.teamset["prior"] )
+	end
+	if TeamHistory.teamset["last"] then 
+		self:LoadTeamHistoryTeam( self.TeamHistory["last"], TeamHistory.teamset["last"] )
+	end	
+end
+
+function Plugin:PrintTeamHistory( Client )
+	local Message = {}
+	-- PrintTable( self.TeamHistory )
+	
+	Message[#Message + 1] = string.format("========Team History========")
+	Message[#Message + 1] = string.format("Current ====================")
+	self:PrintTeamHistorySet( Message, self.TeamHistory["current"]  )
+	Message[#Message + 1] = string.format("Last    ====================")
+	self:PrintTeamHistorySet( Message, self.TeamHistory["last"]  )
+	Message[#Message + 1] = string.format("Prior   ====================")
+	self:PrintTeamHistorySet( Message, self.TeamHistory["prior"]  )
+
+		-- Shine.PrintToConsole
+	if not Client then
+		self.Logger:Trace( "PrintTeamHistory Notify")
+		Notify( TableConcat( Message, "\n" ) )
+	else
+		self.Logger:Trace( "PrintTeamHistory ServerAdminPrint")
+		for i = 1, #Message do
+			ServerAdminPrint( Client, Message[ i ] )
+		end
+	end	
+end
+
+function Plugin:PrintTeamHistorySet( Message, TeamHistory )
+	if TeamHistory.Team1:GetCount() == 0 then
+		Message[#Message + 1] = string.format("Team 1 \"%s\"", TeamHistory.Team1Name)
+		Message[#Message + 1] = "Team 1 is currently empty."
+	else
+		Message[#Message + 1] = string.format("Team 1 \"%s\":", TeamHistory.Team1Name)
+
+		for SteamId in TeamHistory.Team1:Iterate() do
+			local ClientName = "Unknown"
+			local ListClient = Shine.GetClientByNS2ID( SteamId )
+			if ListClient then
+				ClientName = Shine.GetClientName( ListClient )
+			end
+			Message[#Message + 1] = string.format("\t%s[%d]", ClientName, SteamId)
+		end
 	end
 
+	if TeamHistory.Team2:GetCount() == 0 then
+		Message[#Message + 1] = string.format("Team 2 \"%s\"", TeamHistory.Team2Name)
+		Message[#Message + 1] = "Team 2 is currently empty."
+	else
+		Message[#Message + 1] = string.format("Team 2 \"%s\":", TeamHistory.Team2Name)
+
+		for SteamId in TeamHistory.Team2:Iterate() do
+			local ClientName = "Unknown"
+			local ListClient = Shine.GetClientByNS2ID( SteamId )
+			if ListClient then
+				ClientName = Shine.GetClientName( ListClient )
+			end
+			Message[#Message + 1] = string.format("\t%s[%d]", ClientName, SteamId)
+		end
+	end	
 end
 
 function Plugin:Cleanup()
@@ -745,125 +955,67 @@ function Plugin:OnRematchStateChange( Type, Enabled )
 
 end
 
+function Plugin:ReportTeams( TeamHistory, Client )
 
-
-function Plugin:GetPickId(Client)
-
-	local SteamID = Client:GetUserId()
-	local ClientID = Client:GetId()
-	local ID
-	if SteamID > 0 then
-		ID = tostring(SteamID)
-	else
-		ID = StringFormat("BOT%s",ClientID)
-	end
-	return ID
-
-end
---[[
-	Processing a player change to the clients
-]]
-function Plugin:PlayerUpdate( Client )
-
-	--if self.dt.Suspended or not self.InProgress then return end
-
-	local Player       = Client:GetControllingPlayer()
-	local SteamID      = Client:GetUserId()
-	local PlayerName   = Player:GetName()
-	local TeamNumber   = Player:GetTeamNumber()
-	local pickid       = self:GetPickId(Client)
-	local IsBot        = Client:GetIsVirtual()
-	local IsCommander  = Player:isa("Commander") and true or false
-
-	local Data = {
-			Client = Client,
-
-			pickid = pickid,
-			steamid = SteamID,
-			name = PlayerName,
-			team = TeamNumber,
-			pick = (TeamNumber == 1 or TeamNumber == 2) and TeamNumber or 0, 
-			isBot = IsBot,
-			isCommander = IsCommander
-
-		}
-	self.Logger:Trace( "Server Player Update (%s) %s [%s]", Data.steamid, Data.name , Data.pick )
-
-	-- Save Player to our list.
-	self.Players[pickid] = Data
-
-end
-
-
-function Plugin:ReportTeams( Client )
+	TeamHistory = TeamHistory or self.TeamHistory["current"]
 
 	local SortTable = {}
 	local Count = 0
 
-	for pickid, Player in pairs(self.Players) do
-		Count = Count + 1
-		SortTable[ Count ] = { pickid, Player }
+	local function AddTeamSet( TeamNumber, Team ) 
+		for SteamId in Team:Iterate() do
+			local ClientName = "Unknown"
+			local client = Shine.GetClientByNS2ID( SteamId )
+			if client then
+				ClientName = Shine.GetClientName( client )
+			end
+			local Player = {
+				steamid = SteamId,
+				name = ClientName,
+				team = TeamNumber
+			}			
+			Count = Count + 1
+			SortTable[ Count ] = { Player }
+		end
 	end
 
+	AddTeamSet( 1 , TeamHistory.Team1 )
+	AddTeamSet( 2 , TeamHistory.Team2 )
+
 	TableSort( SortTable, function( A, B )
-		if A[ 2 ].pick < B[ 2 ].pick then return true
-		elseif A[ 2 ].pick > B[ 2 ].pick then return false
+		if A[ 1 ].team < B[ 1 ].team then return true
+		elseif A[ 1 ].team > B[ 1 ].team then return false
+		end		
+		if A[ 1 ].name < B[ 1 ].name then return true
+		elseif A[ 1 ].name > B[ 1 ].name then return false
 		end
-		if A[ 1 ] < B[ 1 ] then return true end
+		if A[ 1 ].steamid < B[ 1 ].steamid then return true end
 		return false
 	end )
 
 	local Columns = {
 		{
-			Name = "Key",
-			Getter = function( Entry )
-				return StringFormat( "%s", Entry[1] )
-			end
-		},
-		{
-			Name = "ID",
-			Getter = function( Entry )
-				return StringFormat( "%s", Entry[2].pickid )
-			end
-		},
-		{
 			Name = "Name",
 			Getter = function( Entry )
-				return tostring( Entry[2].name )
+				return tostring( Entry[1].name )
 			end
 		},
 		{
 			Name = "Steam ID",
 			Getter = function( Entry )
-				return tostring( Entry[2].steamid )
+				return tostring( Entry[1].steamid )
 			end
 		},
 		{
 			Name = "Team",
 			Getter = function( Entry )
-				local teamNumber = Entry[2].team
+				local teamNumber = Entry[1].team
 				return Plugin:GetTeamName( teamNumber or 5, true )
-			end
-		},
-		{
-			Name = "Picked",
-			Getter = function( Entry )
-				return tostring( Entry[2].pick )
-			end
-		},
-		{
-			Name = "Commander",
-			Getter = function( Entry )
-				return tostring( Entry[2].isCommander )
 			end
 		}
 	}
 	Shine.PrintTableToConsole( Client, Columns, SortTable )
-	
-	--SortTable
 
 end
-
-
 
 Shine.LoadPluginModule( "logger.lua", Plugin )

@@ -20,10 +20,11 @@ Plugin.DefaultConfig = {
 	CountdownSeconds = 60,
 	BlockedVotesMinPlayer = 12,
 	AllowTesting = false,
-	AutoDisableSelf = false,
+	AutoDisableSelf = true,
 		-- AutoRemoveBots = true,
 		-- AutoReadyRoom = true,
-
+	RestoreTeamHistoryAfterMapchange = true,
+	TeamHistoryLifeTime = 300, -- max amount of time the history is preserved after a mapchange. Increase/decrease this value based on server loading time
 }
 
 Plugin.NotifyPrefixColour = {

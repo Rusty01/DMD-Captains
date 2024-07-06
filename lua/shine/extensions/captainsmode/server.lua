@@ -104,10 +104,12 @@ do
 
 	local CAPTAINS_TYPES = {
 		Captains = "CAPTAINS_NOTIFY_",
-		AutoDisableSelf = "CAPTAINS_AUTODISABLE_"
+		AutoDisableSelf = "CAPTAINS_AUTODISABLE_",
+		CaptainsNight = "CAPTAINS_NIGHT_"
 	}
 	local CAPTAINS_DT = {
-		Captains = true
+		Captains = true,
+		CaptainsNight = true
 	}
 
 	function Plugin:NotifyState( Player )
@@ -168,6 +170,7 @@ function Plugin:Initialise()
 
 	self.dt.Captains = (Plugin.Config.Captains ~= false)
 	self.dt.Suspended = (self.dt.Captains ~= true)
+	self.dt.CaptainsNight = (Plugin.Config.CaptainsNight ~= false)
 
 	self:ResetState()
 	self:CreateCommands()
@@ -186,7 +189,7 @@ function Plugin:ResetState()
 	self:DestroyAllTimers()
 	self.InProgress = false
 	self.Pending = false
-	self.CaptainsNight = false
+	self.CaptainsNight = self.dt.CaptainsNight
 
 	self.Players = {}
 	self.Captains = {}
@@ -290,7 +293,7 @@ function Plugin:CreateCommands()
 		end
 	end
 	self:BindCommand("sh_cm_mutiny", "cancelcaptains", CaptainMutiny
-	, true):Help("Cancel captains mode.")
+	, true):Help("Player Cancel captains mode.")
 
 
 	--[[
@@ -307,7 +310,7 @@ function Plugin:CreateCommands()
 		self:Notify(string.format("Captains mode was cancelled by %s.", PlayerName), "red")
 	end
 	self:BindCommand("sh_cm_cancel", nil, CancelCaptains
-		):Help("Cancel captains mode.")
+		):Help("Admin Cancel captains mode.")
 
 	--[[
 		Admins can list teams
@@ -339,10 +342,12 @@ function Plugin:CreateCommands()
 	--[[
 		The sh_cm_captainsnight allows admins to Force Everyone to RR for Captains night. 
 	]]
-	self:BindCommand("sh_cm_captainsnight", 'captainsnight', function (Client)
-		self:OnCaptainsNightChange( not self.CaptainsNight )
-	end
-		):Help("Toggle Captains Night to block team joining.")	
+	local CaptainsNight = self:BindCommand("sh_cm_captainsnight", 'captainsnight', function (Client, Enable)
+		self.Logger:Trace( "Captains Night toggle %s", Enable and "Enabled" or "Disable")
+		self:OnCaptainsNightChange( Enable )
+	end)
+	CaptainsNight:Help("Toggle Captains Night to block team joining.")	
+	CaptainsNight:AddParam{ Type = "boolean", Optional = true, Default = true, Help = "Enabled" }
 
 	self:BindCommand("sh_cm_autodisable", nil, function (client) 
 		local feature = "AutoDisableSelf"
@@ -359,28 +364,33 @@ end
 
 function Plugin:OnCaptainsNightChange( CaptainsNightChange )
 
-	self.CaptainsNight = CaptainsNightChange
-	
-	if self.CaptainsNight then
+	if CaptainsNightChange then
+		self:SetFeatureEnabled( "CaptainsNight", CaptainsNightChange )
 		if self.dt.Suspended then
 			self:SetFeatureEnabled( "Captains", true )
 			self:NotifyState( nil );
 		end	
+		self.CaptainsNight = self.dt.CaptainsNight		
+		local pcallSuccess, GameState = pcall(function() return GetGamerules():GetGameState() end)
+		self.Logger:Trace( "OnCaptainsNightChange %s %s", pcallSuccess, GameState  )
+		if pcallSuccess and GameState ~= kGameState.Started then
+			--this forces everyone to the ready room
+			local Enabled, MapVote = Shine:IsExtensionEnabled( "mapvote" )
+			if Enabled then
+				self.Logger:Trace( "Server ForcePlayersIntoReadyRoom" )
+				MapVote:ForcePlayersIntoReadyRoom()
+			end
+			if not self.InProgress then 
+				self:CreateCaptainTimer()
+			end
+		end		
 	else
-		if not self.dt.Suspended then
-			self:SetFeatureEnabled( "Captains", false )
-			self:NotifyState( nil );
-		end
-		return	
+		self:SetFeatureEnabled( "CaptainsNight", CaptainsNightChange )		
+		self.CaptainsNight = self.dt.CaptainsNight
 	end
-
-	--self.Config.CaptainsNight = self.CaptainsNight
-	--self:SaveConfig()
-
 	local message = string.format( "Captains Night - team joining %s.", self.CaptainsNight and "Blocked" or "Allowed" )
 	self.Logger:Debug( message )
-	self:Notify( message, "yellow")
-	self:CreateCaptainTimer()
+	self:Notify( message, "yellow")	
 end
 
 function Plugin:ReportTeams( Client )
@@ -1063,7 +1073,8 @@ end
 ]]
 function Plugin:JoinTeam(_, Player, NewTeam, Force, ShineForce)
 	if ShineForce then self.Logger:Trace( "Server JoinTeam Force"); return end
-	
+	if self.dt.Suspended then return end
+
 	if not self.CaptainsNight and not self.InProgress 
 	and NewTeam ~= 3 then 
 		self.Logger:Trace( "Server JoinTeam Not InProgress [%s]", NewTeam); 

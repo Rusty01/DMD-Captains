@@ -33,9 +33,7 @@ function Plugin:ResetState()
 	self.TeamNames = {"Marines", "Aliens"}
 	--self.CaptainNames = {"One","Two"}
 	self:ResetTeamNames( )
-
 	self.MatchStart = false
-	self.ClientInProgress = false
 
 end
 
@@ -60,7 +58,6 @@ function Plugin:Cleanup()
 	self.BaseClass.Cleanup(self)
 end
 
-
 function Plugin:ReceiveRematchMatchStart(Data)
 	self.Logger:Debug( "ReceiveRematchMatchStart" )
 	-- when the match starts.. remove stuff.
@@ -77,8 +74,6 @@ function Plugin:ReceiveRematchEnd(Data)
 	self:ResetState()
 end
 
-
-
 function Plugin:OnFirstThink()
 	self:CallModuleEvent("OnFirstThink")
 	self.Delay = 0.5
@@ -90,7 +85,6 @@ function Plugin:OnFirstThink()
 	Shine.Hook.SetupClassHook( "GUIScoreboard", "UpdateTeam", "Rematch_GUIScoreboardUpdateTeam", "PassivePost")
 
 end
-
 
 function Plugin:OnSuspend()
 	--self:Disable()
@@ -135,12 +129,8 @@ function Plugin:Think( DeltaTime )
 
 end
 
-
-
 function Plugin:Rematch_GUIScoreboardUpdateTeam(  scoreboard, updateTeam  )
 	if self.dt.Suspended then return end
-
-	--Plugin._GUIScoreboardUpdateTeam(scoreboard, updateTeam)
 	local teamNameGUIItem = updateTeam["GUIs"]["TeamName"]
 	local teamScores = updateTeam["GetScores"]()
 	local teamNumber = updateTeam["TeamNumber"]
@@ -151,21 +141,11 @@ function Plugin:Rematch_GUIScoreboardUpdateTeam(  scoreboard, updateTeam  )
 	local originalHeaderText = teamNameGUIItem:GetText()
 	local newTeamName = self.TeamNames[teamNumber]
 	local teamHeaderText
-
 	local teamNameText = Locale.ResolveString(string.format("NAME_TEAM_%s", updateTeam["TeamNumber"]))
 	teamHeaderText = string.gsub(originalHeaderText, teamNameText, newTeamName )
-
---	-- How many items per player.
---	local numPlayers = table.icount(teamScores)
---	-- Update the team name text.
---	local playersOnTeamText = string.format("%d %s", numPlayers, numPlayers == 1 and Locale.ResolveString("SB_PLAYER") or Locale.ResolveString("SB_PLAYERS"))
---	local teamHeaderText
---	teamHeaderText = string.format("%s (%s)", teamNameText, playersOnTeamText)
-
 	teamNameGUIItem:SetText(teamHeaderText)
 
 end
-
 
 function Plugin:ReceiveCountdownNotification(Data)
 	Shine.ScreenText.Add(
