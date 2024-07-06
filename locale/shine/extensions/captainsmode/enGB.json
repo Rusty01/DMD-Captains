@@ -7,6 +7,8 @@
 	"CAPTAINS_NOTIFY_DISABLED": "Captains mode has been disabled.",
 	"CAPTAINS_AUTODISABLE_ENABLED": "Captains Auto Disable has been enabled.",
 	"CAPTAINS_AUTODISABLE_DISABLED": "Captains Auto Disable has been disabled.",
+	"CAPTAINS_NIGHT_ENABLED": "Captains Night has been enabled.",
+	"CAPTAINS_NIGHT_DISABLED": "Captains Night has been disabled.",	
 
 	"NOTIFY_PREFIX": "[Captains Mode]",
 	"SPECTATOR_TO_CAPTAIN": "Spectators not allowed to Captain.",
