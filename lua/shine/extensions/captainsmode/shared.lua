@@ -85,6 +85,8 @@ function Plugin:SetupDataTable()
 	self:AddNetworkMessage("SetTeamName", {team = 'integer (0 to 2)', teamname = "string (255)", settings="boolean"}, "Server")
 	self:AddNetworkMessage("SetReady", {ready = "boolean", team = 'integer (0 to 2)', settings="boolean"}, "Server")
 	self:AddNetworkMessage("UnsetReady", {}, "Client")
+	self:AddNetworkMessage("PlayerLost", {}, "Client")
+	self:AddNetworkMessage("CheckTeams", {settings="boolean"}, "Server")
 
 	self:AddNetworkMessage("PickNotification", {text = "string (255)"}, "Client")
 	self:AddNetworkMessage("TeamNamesNotification", {marines = "string (255)", aliens = "string (255)"}, "Client")
