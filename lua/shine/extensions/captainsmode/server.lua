@@ -172,13 +172,19 @@ function Plugin:Initialise()
 	self.dt.Suspended = (self.dt.Captains ~= true)
 	self.dt.CaptainsNight = (Plugin.Config.CaptainsNight ~= false)
 
+	if Plugin.Config.ShowMarineAlienToCaptains then
+		self.DefaultTeamNames = {"Marines", "Aliens"}
+	else
+		self.DefaultTeamNames = {"Team1", "Team2"}
+	end
+
 	self:ResetState()
 	self:CreateCommands()
 
 	self:TestingCaptainsInitialise()
 
 	-- we won't reset these values between games.
-	self.LastTeamNames = {"Marines", "Aliens"}
+	self.LastTeamNames = TableCopy( self.DefaultTeamNames )
 
 	return true
 end
@@ -194,9 +200,9 @@ function Plugin:ResetState()
 	self.Players = {}
 	self.Captains = {}
 
-	self.TeamNames = {"Marines", "Aliens"}
 	self.Ready = {false, false}
 	self.LastCount = {0,0}
+	self.TeamSwap = {false, false}
 
 	self.CaptainFirstTurn = nil
 	self.CaptainTurn = nil
@@ -204,8 +210,8 @@ function Plugin:ResetState()
 	self.GameStarted = false
 
 	self.Team1IsMarines = true
-	self.dt.Team1Name= self.TeamNames[1]
-	self.dt.Team2Name= self.TeamNames[2]
+	self.dt.Team1Name= self.DefaultTeamNames[1]
+	self.dt.Team2Name= self.DefaultTeamNames[2]
 
 	self.dt.CaptainTurn = 0
 
@@ -287,7 +293,7 @@ function Plugin:CreateCommands()
 		or Shine:HasAccess( Client, "sh_cm_cancel" )
 		then
 			self:EndCaptains()
-			self:Notify(string.format("Captains mode was cancelled by %s.", PlayerName), "red")
+			self:Notify(StringFormat("Captains mode was cancelled by %s.", PlayerName), "red")
 		else
 			Shine:Notify(Client, ChatName, PlayerName, "You are not allowed to Mutiny.")
 		end
@@ -307,7 +313,7 @@ function Plugin:CreateCommands()
 
 		local PlayerName = Shine.GetClientName( Client )
 		self:EndCaptains()
-		self:Notify(string.format("Captains mode was cancelled by %s.", PlayerName), "red")
+		self:Notify(StringFormat("Captains mode was cancelled by %s.", PlayerName), "red")
 	end
 	self:BindCommand("sh_cm_cancel", nil, CancelCaptains
 		):Help("Admin Cancel captains mode.")
@@ -356,6 +362,17 @@ function Plugin:CreateCommands()
 		self:NotifyFeatureState( feature, NewState, client )
 	end ):Help("Toggle Captains Mod Auto Self Disable")
 
+
+	--[[
+		List Captains Info
+	]]
+	self:BindCommand( "sh_cm_status", nil, function (Client)
+		self.Logger:Info( "Captains Night %s ", self.CaptainsNight )
+		self.Logger:Info( "Captains Suspended %s ", self.dt.Suspended )
+		self.Logger:Info( "Captains %s ", self.dt.Captains )
+	end):Help( "Lists the current Captains status." )
+
+
 	if Plugin.Config.AllowTesting then
 		self:CreateTestingCommands()
 	end
@@ -379,6 +396,9 @@ function Plugin:OnCaptainsNightChange( CaptainsNightChange )
 			if Enabled then
 				self.Logger:Trace( "Server ForcePlayersIntoReadyRoom" )
 				MapVote:ForcePlayersIntoReadyRoom()
+			else
+				self.Logger:Trace( "Server ForcePlayersIntoReadyRoom fallback sh_rr @alien,@marine" )
+				Shared.ConsoleCommand("sh_rr @alien,@marine")
 			end
 			if not self.InProgress then 
 				self:CreateCaptainTimer()
@@ -388,7 +408,7 @@ function Plugin:OnCaptainsNightChange( CaptainsNightChange )
 		self:SetFeatureEnabled( "CaptainsNight", CaptainsNightChange )		
 		self.CaptainsNight = self.dt.CaptainsNight
 	end
-	local message = string.format( "Captains Night - team joining %s.", self.CaptainsNight and "Blocked" or "Allowed" )
+	local message = StringFormat( "Captains Night - team joining %s.", self.CaptainsNight and "Blocked" or "Allowed" )
 	self.Logger:Debug( message )
 	self:Notify( message, "yellow")	
 end
@@ -588,8 +608,8 @@ function Plugin:StartCaptainsPresetup()
 			self.Logger:Trace( "Server ForcePlayersIntoReadyRoom" )
 			MapVote:ForcePlayersIntoReadyRoom()
 		else
-			-- fallback to just moving *everyone* to the readyroom.
-			Shared.ConsoleCommand("sh_rr *")
+			-- fallback to to console command. 
+			Shared.ConsoleCommand("sh_rr @alien,@marine")
 		end
 	end
 	if Plugin.Config.AutoRemoveBots then
@@ -607,7 +627,7 @@ function Plugin:StartCaptainsPresetup()
 				local BotController = Gamerules.botTeamController
 				self.SavedBotControllerMaxBots = BotController.MaxBots
 			end
-			Shared.ConsoleCommand(string.format("sv_maxbots %d", 0))				
+			Shared.ConsoleCommand(StringFormat("sv_maxbots %d", 0))				
 		end
 		
 		self.AutoRemoveBotsComplete = true
@@ -626,12 +646,12 @@ function Plugin:StartCaptains()
 	-- Roll the dice to see who gets which team.
 	if math.random(0, 1) == 1 then
 		self.Team1IsMarines = true
-		self.dt.Team1Name= self.TeamNames[1]
-		self.dt.Team2Name= self.TeamNames[2]
+		self.dt.Team1Name= self.DefaultTeamNames[1]
+		self.dt.Team2Name= self.DefaultTeamNames[2]
 	else
 		self.Team1IsMarines = false
-		self.dt.Team1Name= self.TeamNames[2]
-		self.dt.Team2Name= self.TeamNames[1]
+		self.dt.Team1Name= self.DefaultTeamNames[2]
+		self.dt.Team2Name= self.DefaultTeamNames[1]
 	end
 
 	-- Send Player:client to  everyone
@@ -672,15 +692,23 @@ function Plugin:StartCaptains()
 
 end
 
-
 function Plugin:ReceiveSetTeamName(Client, Data)
+	if Plugin.dt.Suspended then return end
+	local PlayerName = Shine.GetClientName( Client )
 	local CaptainIndex = self:GetCaptainIndex(Client)
-	self.Logger:Debug( "Server ReceiveSetTeamName " )
+	if CaptainIndex == 0 and Data.settings == false then
+		return
+	elseif CaptainIndex == 0 then
+		if not Shine:HasAccess( Client, "sh_cm_captainsnight" ) then
+			self.Logger:Error("ReceiveSetTeamName: Unauthorized %s", PlayerName)
+			return
+		end
+	end
+	CaptainIndex = Data.team
 
 	if CaptainIndex == 1 or CaptainIndex == 2 then
 		local TeamName = Data.teamname
-		self.Logger:Info( "Captain %s changed their team name %s", CaptainIndex, TeamName )
-		self.TeamNames[CaptainIndex] = TeamName
+		self.Logger:Info( "%s changed team %s name to %s", PlayerName, CaptainIndex, TeamName )
 		if CaptainIndex == 1 then
 			self.dt.Team1Name = TeamName
 		else
@@ -714,23 +742,37 @@ function Plugin:IsCaptainBot(CaptainIndex)
 end
 
 function Plugin:ReceiveSetReady(Client, Data)
-	local Team = self:GetCaptainIndex(Client)
-	if not Team then return end
-
+	if Plugin.dt.Suspended then return end
+	local PlayerName = Shine.GetClientName( Client )
+	local CaptainIndex = self:GetCaptainIndex(Client)
+	if not CaptainIndex and Data.settings == false then 
+		return
+	elseif CaptainIndex == 0 then 
+		if not Shine:HasAccess( Client, "sh_cm_captainsnight" ) then
+			self.Logger:Error("ReceiveSetReady: Unauthorized %s", PlayerName)
+			return
+		end	
+	end
+	local Team = Data.team
 	local Ready = Data.ready
-	local CaptainName = Shine.GetClientName( Client )
-
 	self.Logger:Debug( "Server ReceiveSetReady " )
 
 	if Team > 0 then
 		self.Ready[Team] = Data.ready
-		if Ready then
-			self:Notify(CaptainName .. "'s team is ready.", "green")
+		if CaptainIndex > 0 then 
+			if Ready then
+				self:Notify( StringFormat("%s's team is ready.", PlayerName), "green")
+			else
+				self:Notify( StringFormat("%s's team is not ready.", PlayerName), "red")
+			end
 		else
-			self:Notify(CaptainName .. "'s team is not ready.", "red")
+			if Ready then
+				self:Notify( StringFormat("%s set team %s as ready.", PlayerName, Team), "green")
+			else
+				self:Notify( StringFormat("%s set team %s as not ready.", PlayerName, Team), "red")
+			end
 		end
 	end
-
 
 	if self.Ready[1] and self.Ready[2] then
 		local revokePick = false
@@ -749,7 +791,7 @@ function Plugin:ReceiveSetReady(Client, Data)
 
 			if not Player.isPickable and Player.pick ~= 0 then
 				-- revoke pick
-				self:Notify(string.format("Picked player %s removed from team %s[%s].", Player.name,  Shine.GetClientName( self.Captains[Player.pick] ),Player.pick), "red")
+				self:Notify(StringFormat("Picked player %s removed from team %s[%s].", Player.name,  Shine.GetClientName( self.Captains[Player.pick] ),Player.pick), "red")
 				self.Logger:Debug( "Server ReceiveSetReady revoke pick %s", Player.name )
 				Player.pick = 0
 				self:PlayerStatus( Player )
@@ -769,7 +811,7 @@ function Plugin:ReceiveSetReady(Client, Data)
 		-- Make sure teams are not more than one appart.
 		if TeamCount[1] > (TeamCount[2]+1)
 		or TeamCount[2] > (TeamCount[1]+1) then
-			if  self.LastCount[1] ~= TeamCount[1]
+			if self.LastCount[1] ~= TeamCount[1]
 			or self.LastCount[2] ~= TeamCount[2] then
 				self.LastCount[1] = TeamCount[1]
 				self.LastCount[2] = TeamCount[2]
@@ -811,6 +853,10 @@ function Plugin:StartTeams()
 		self:OverrideShuffleTeams()
 	end
 
+	self.LastTeams = {}
+	self.LastTeams[1] = {}
+	self.LastTeams[2] = {}
+
 	-- Start the game
 	for pickid, Player in pairs(self.Players) do
 		if Player.pick == 1 or Player.pick == 2 then
@@ -826,12 +872,11 @@ function Plugin:StartTeams()
 				if PlayerObj ~= nil then
 					Gamerules:JoinTeam(PlayerObj, Teams[Player.pick], true, true)
 				else
-					Shine:NotifyError(nil,string.format("Player %s not found", Player.name))
+					Shine:NotifyError(nil,StringFormat("Player %s not found", Player.name))
 				end
 			end
 		end
 	end
-
 	self.MovingPlayers = false
 
 	-- Just close the GUI for now but don't reset state
@@ -872,7 +917,7 @@ function Plugin:StartGame()
 			self:SendNetworkMessage(
 				nil,
 				"CountdownNotification",
-				{text = string.format("Game will start in %s seconds", Seconds)},
+				{text = StringFormat("Game will start in %s seconds", Seconds)},
 				true
 			)
 
@@ -913,7 +958,7 @@ function Plugin:EndCaptains()
 			DMDBotManager:ForceBotDelay(1)
 		else
 			local maxbots = self.SavedBotControllerMaxBots or 12
-			Shared.ConsoleCommand(string.format("sv_maxbots %d", maxbots))
+			Shared.ConsoleCommand(StringFormat("sv_maxbots %d", maxbots))
 			self.SavedBotControllerMaxBots = nil
 		end
 	end
@@ -985,6 +1030,70 @@ function Plugin:ReceivePickPlayer(Client, Data)
 	self:SendNetworkMessage(nil, "PickNotification", {text = PickMsg}, true)
 
 	self:SetCaptainTurn()
+
+end
+
+function Plugin:ReceiveRequestSwapTeams(Client, Data )
+	if Plugin.dt.Suspended then return end
+	self.Logger:Debug("Plugin:ReceiveRequestSwapTeams")
+	local PlayerName = Shine.GetClientName( Client )
+	local CaptainIndex = self:GetCaptainIndex(Client)
+	if CaptainIndex == 0 and Data.settings == false then 
+		return
+	elseif CaptainIndex == 0 then
+		if not self:ShowSettings( Client )  then
+			self.Logger:Error("RequestSwapTeams: Unauthorized %s", PlayerName)
+			return
+		end
+	end
+	CaptainIndex = Data.team
+
+	if CaptainIndex == 1 or CaptainIndex == 2 then
+		local otherCaptain = (CaptainIndex % 2) + 1
+		self.TeamSwap[CaptainIndex] = true
+
+		if self.TeamSwap[1]== true and self.TeamSwap[2]==true then
+			self:OnSwapTeams( Client )
+		else
+			self:SendNetworkMessage(self.Captains[otherCaptain], "TeamSwapRequested", {team=CaptainIndex}, true)
+		end
+	end
+end
+
+function Plugin:OnSwapTeams( Client )
+	self.Logger:Debug("Plugin:OnSwapTeams")
+	self.TeamSwap = {false, false}
+
+	self.Team1IsMarines = not self.Team1IsMarines
+
+	local defaultTeamNames = TableCopy( self.DefaultTeamNames )
+	local teamNames = {}
+
+	teamNames[1] = self.dt.Team1Name
+	teamNames[2] = self.dt.Team2Name
+	if self.Team1IsMarines then 
+		if teamNames[1] == defaultTeamNames[2] then
+			teamNames[1] = defaultTeamNames[1]	
+		end
+		if teamNames[2] == defaultTeamNames[1] then
+			teamNames[2] = defaultTeamNames[2]	
+		end
+	else
+		if teamNames[1] == defaultTeamNames[1] then
+			teamNames[1] = defaultTeamNames[2]	
+		end
+		if teamNames[2] == defaultTeamNames[2] then
+			teamNames[2] = defaultTeamNames[1]	
+		end		
+	end
+	self.dt.Team1Name= teamNames[1]
+	self.dt.Team2Name= teamNames[2]
+	
+	if Plugin.Config.AllowPlayersToViewTeams then
+		self:SendNetworkMessage( nil , "SwapTeams", {team1marines = self.Team1IsMarines}, true)
+	else
+		self:SendNetworkMessage(self.Captains, "SwapTeams", {team1marines = self.Team1IsMarines}, true)
+	end
 
 end
 
@@ -1090,19 +1199,19 @@ function Plugin:JoinTeam(_, Player, NewTeam, Force, ShineForce)
 		local Client = Shine.GetClientForPlayer( Player )
 		if self:IsCaptain(Client) then
 			Shine:NotifyError(Player
-				,string.format("Captain not allowed to join %s [%s]. You must !cancelcaptains first."
+				,StringFormat("Captain not allowed to join %s [%s]. You must !cancelcaptains first."
 					, Plugin:GetTeamName( NewTeam )
 					, NewTeam))
 			return false
 		end
 		--Moved To Spectate
- 		--Shine:NotifyError(Player,string.format("Attempting to join Team %s [%s].", Plugin:GetTeamName( NewTeam ), NewTeam))
+ 		--Shine:NotifyError(Player,StringFormat("Attempting to join Team %s [%s].", Plugin:GetTeamName( NewTeam ), NewTeam))
 		return
 	elseif NewTeam == 0 then
 		return
 	else
-		-- If we are testing, Allow Allow Bots to join teams.
-		if self.TestingCaptains then
+		-- If we are testing, Allow Bots to join teams.
+		if self.dt.TestingCaptains then
 			local Client = Shine.GetClientForPlayer( Player )
 			if Client and Client:GetIsVirtual() then return end
 		end
@@ -1159,7 +1268,7 @@ end
 function Plugin:SetGameState(Gamerules, State, OldState)
 
 	self.Logger:Debug( "Server state=========================== %s[%s] ==> %s[%s]", kGameState[OldState],OldState, kGameState[State],State)
-	--self:Notify(string.format("Server state: %s  %s", OldState, State))
+	--self:Notify(StringFormat("Server state: %s  %s", OldState, State))
 	--[[
 		kGameState = enum( {
 		1	'NotStarted',
@@ -1183,7 +1292,7 @@ function Plugin:SetGameState(Gamerules, State, OldState)
 		-- Okay to turn it off.
 		self.GameStarted = false
 		-- remove test bots. [this worked to remove all bots]
-		--Shared.ConsoleCommand(string.format("sv_maxbots %d", 12))
+		--Shared.ConsoleCommand(StringFormat("sv_maxbots %d", 12))
 		-- Delay MatchComplete for a few seconds for the Scores screen to appear before we reset team names.
 		Plugin:SimpleTimer( 5, function(Timer)
 			self:MatchComplete()
@@ -1266,6 +1375,8 @@ end
 function Plugin:ClientConfirmConnect( Client )
 
 	if self.dt.Suspended then return end
+	self:SendCaptainOptions( Client )
+
 	if not self.InProgress then 
 		self:NotifyCaptainsMessage(Client);
 		return 
@@ -1289,6 +1400,21 @@ function Plugin:ClientConfirmConnect( Client )
 
 end
 
+function Plugin:ShowSettings( Client )
+	return Shine:HasAccess( Client, "sh_cm_captainsnight" )
+end
+
+function Plugin:SendCaptainOptions( Client ) 
+	local CaptainOptions = {
+		ShowSettings = self:ShowSettings( Client )
+		-- ShowSettings = false
+	}
+	self:SendNetworkMessage( Client , "CaptainOptions", CaptainOptions, true )
+end
+
+function Plugin:ReceiveRequestCaptainOptions( Client )
+	self:SendCaptainOptions( Client )
+end
 
 -- Cancel captains mode if a captain quits the game
 function Plugin:ClientDisconnect(Client)
@@ -1340,7 +1466,7 @@ end
 
 function Plugin:TestingCaptainsInitialise()
 
-	self.TestingCaptains = false
+	self.dt.TestingCaptains = false
 	self.TestingCaptainBots = nil
 
 	--self:CreateCommands()
@@ -1367,7 +1493,7 @@ function Plugin:CreateTestingCommands()
 			return
 		end
 
-		self.TestingCaptains = true
+		self.dt.TestingCaptains = true
 		self.TestingCaptainBots = {}
 		self.Logger:Debug( "Captains mode TESTING by %s.", PlayerName )
 		self:TestingCaptainsPresetup()
@@ -1385,7 +1511,7 @@ function Plugin:TestingCaptainsPresetup()
 	self:DestroyTimer("NeedOneMoreCaptain")
 
 	-- Add 12 more bots for testing. We need the bots to add now so they get Ids generated in PlayerUpdate.
-	--Shared.ConsoleCommand(string.format("addbot %d", 12))
+	--Shared.ConsoleCommand(StringFormat("addbot %d", 12))
 	self.Logger:Debug( "TestingCaptains: Add Bots for picking")
 	OnConsoleAddBots( nil, 12 )
 	self.Logger:Debug( "TestingCaptains: 12 Bots Added")
@@ -1440,14 +1566,14 @@ function Plugin:TestingCaptainsPresetup()
 end
 
 function Plugin:TestingCaptainsAddTimers()
-	if not self.TestingCaptains then return end
+	if not self.dt.TestingCaptains then return end
 
 	for team = 1, 2 do
 		local team = self:GetCaptainIndex(self.TestingCaptainBots[team])
 		if team > 0 then
 			local team2 = (team % 2) + 1
 
-			local timerName = string.format("AutoPickTeam_%d", team)
+			local timerName = StringFormat("AutoPickTeam_%d", team)
 			self.Logger:Debug( "TestingCaptains: Adding Bot Captain timer %s", timerName)
 
 			self:CreateTimer(
@@ -1460,7 +1586,7 @@ function Plugin:TestingCaptainsAddTimers()
 				if self.dt.CaptainTurn ~= team then
 					if self.Ready[team2] == true then
 					 	self.Logger:Debug( "Bot Captain team : %s Ready", team)
-						self:Notify( string.format( "Bot Captain team : %s Ready", team) , "green")
+						self:Notify( StringFormat( "Bot Captain team : %s Ready", team) , "green")
 						self.Ready[team] = true
 						self:DestroyTimer(timerName)
 					end
@@ -1475,7 +1601,7 @@ function Plugin:TestingCaptainsAddTimers()
 					end
 				end
 				self.Logger:Debug( "Bot Captain team : %s Ready", team)
-				self:Notify( string.format( "Bot Captain team : %s Ready", team) , "green")
+				self:Notify( StringFormat( "Bot Captain team : %s Ready", team) , "green")
 				self.Ready[team] = true
 				self:DestroyTimer(timerName)
 				return
@@ -1581,7 +1707,7 @@ end
 
 function Plugin:NotifyTeamNames()
 
-	self.LastTeamNames = {"Marines", "Aliens"}
+	self.LastTeamNames = TableCopy( self.DefaultTeamNames )
 	if self.Team1IsMarines then
 		self.LastTeamNames[1] = self.dt.Team1Name
 		self.LastTeamNames[2] = self.dt.Team2Name
@@ -1607,8 +1733,45 @@ function Plugin:GetTeam2Name()
 	return self.LastTeamNames[2]
 end
 
+function Plugin:GetLastTeams()
+	return self.LastTeams
+end
+
 function Plugin:ResetLastTeams()
-	self.LastTeamNames = {"Marines", "Aliens"}
+	self.LastTeams = {}
+	self.LastTeams[1] = {}
+	self.LastTeams[2] = {}
+	self.LastTeamNames = TableCopy( self.DefaultTeamNames )
+end
+
+function Plugin:SetLastTeams()
+
+	local movedPlayer = false
+	self.MovingPlayers = true
+	for team, Teamlist in pairs(self.LastTeams) do
+		for pickid, Player in pairs( TeamList ) do
+			local client = Player.Client
+			if client == nil then
+				-- added this because its required when using BOTS
+				client = Shine.GetClientByName(Player.name)
+			end
+
+			if Shine:IsValidClient( client ) then
+				local PlayerObj = client and client:GetControllingPlayer()
+				if PlayerObj ~= nil then
+					Gamerules:JoinTeam(PlayerObj, team, true, true)
+					movedPlayer = true
+				else
+					Shine:NotifyError(nil,StringFormat("Player %s not found", Player.name))
+				end
+			end
+		end
+	end
+	self.MovingPlayers = false
+	if movedPlayer == true then 
+		self:NotifyTranslated( nil , "CAPTAINS_LASTTEAMS" ) 
+	end 
+
 end
 
 
