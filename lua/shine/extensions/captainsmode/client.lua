@@ -41,6 +41,7 @@ function Plugin:ResetState()
 	self.Players = {}
 	self.IsReady = false
 	self.QueuePlayerUpdate = false
+	self.QueuePickCompleteCheck = false
 
 	self.myPickid = ""
 	self.otherTeam = 0
@@ -75,6 +76,7 @@ function Plugin:CaptainMenuReset()
 	self.PickListSort = {SortedColumn = 2, Descending = false}
 	self.PickList = nil
 	self.PickRows = {}
+	self.PickRowsCount = 0
 
 	self.TeamList = {}
 	self.TeamListSort = {{SortedColumn = 2, Descending = false},{SortedColumn = 2, Descending = false}}
@@ -212,6 +214,7 @@ function Plugin:CaptainMenuInitialise()
 
 
 			self.PickRows = {}
+			self.PickRowsCount = 0
 
 			local CommandPanel = Panel:Add("Panel")
 			CommandPanel:SetSize(Vector(self.PanelSize.x, self.PanelSize.y * 0.13, 0))
@@ -779,6 +782,36 @@ function Plugin:CaptainMenuInitialise()
 				}
 			end
 
+			Rows[ #Rows + 1] = {
+				Class = "Horizontal",
+				Type = "Layout",
+				Props = {
+					AutoSize = UnitVector( Percentage( 96 ), HighResScaled( 32 ) ),
+					--	Spacing( left, up, right, down )
+					Margin = Spacing( 0, 0, 0, HighResScaled( 5 ) ),
+					Fill = false
+				},
+				Children = {
+					{
+						ID = "TeamRefresh",
+						Class = "Button",
+						Props = {
+							AutoFont = Font,
+							AutoSize = UnitVector( Percentage( 20 ), HighResScaled( 32 ) ),
+							Margin = Spacing( HighResScaled( 32 ), HighResScaled( 5 ), HighResScaled( 5 ), HighResScaled( 5 ) ),
+							Text = "Refresh Team List",
+							DoClick = function( Button )
+								self:SendNetworkMessage("CheckTeams", {settings=true}, true)
+								Button:SetEnabled(false)
+							end,
+						},
+						-- OnBuilt = function( config, Button )
+						-- 	self:GUI_AddObj( nil, config.ID, Button )
+						-- end
+					}
+				}
+			}
+
 		end
 
 				local LastRow = Rows[ #Rows ]
@@ -852,6 +885,29 @@ function Plugin:CaptainMenuInitialise()
 
 end
 
+function Plugin:PicklistCheck()
+	if self.myTeam == 0 then return end
+
+	local Turn = self:GUI_GetObj( 0, "TurnText" )
+	local Pick = self:GUI_GetObj( 0, "PickButton" )
+
+	if not SGUI.IsValid( self.Window ) then
+		self.Logger:Debug( "PicklistCheck Window invalid" )
+ 		return
+	end
+
+	if  self.PickRowsCount == 0
+	and SGUI.IsValid( Turn )
+	and SGUI.IsValid( Pick )
+	and Turn:GetIsVisible() then
+		self.Logger:Debug( "PicklistCheck Tab Check" )
+		local tab = 2
+		local haveTab = self.Window:SetSelectedTab( self.Window.Tabs[ tab ] )
+		if haveTab then self.Logger:Debug( "PicklistCheck new Tab %s", self.Window.Tabs[ tab ].Name ) end
+		self.Window:InvalidateLayout( true )
+		StartSoundEffect("sound/NS2.fev/marine/voiceovers/commander/research_complete")
+	end
+end
 
 function Plugin:PicklistUpdate()
 	self.Logger:Debug("Picklist Update start" )
@@ -867,10 +923,12 @@ function Plugin:PicklistUpdate()
 		ExistingPlayers[ Ent.pickid ] = true
 	end
 
-
+	self.PickRowsCount = 0
 	for pickid, Row in pairs( self.PickRows ) do
 		if not ExistingPlayers[ pickid ] then
 			self:PickListRemove( pickid, Row.Index, Row:GetColumnText(2) )
+		else
+			self.PickRowsCount = self.PickRowsCount + 1
 		end
 	end
 
@@ -1001,8 +1059,8 @@ function Plugin:TeamListUpdate()
 	end
 
 	if  self.TeamCount[1] > (self.TeamCount[2]+1) then
-		self.TeamNotice[1] = "Select a player to give the other team."
-		self.TeamNotice[2] = "Wait for a player from the other team."
+		self.TeamNotice[1] = "Select a player to give."
+		self.TeamNotice[2] = "Wait for a player trade."
 		local skillDiff = self.TeamSkill[1] - self.TeamSkill[2]
 		if skillDiff > 0 then
 			skillDiff = skillDiff / 2
@@ -1012,8 +1070,8 @@ function Plugin:TeamListUpdate()
 		end
 
 	elseif self.TeamCount[2] > (self.TeamCount[1]+1) then
-		self.TeamNotice[2] = "Select a player to give the other team."
-		self.TeamNotice[1] = "Wait for a player from the other team."
+		self.TeamNotice[2] = "Select a player to give."
+		self.TeamNotice[1] = "Wait for a player trade."
 		local skillDiff = self.TeamSkill[1] - self.TeamSkill[2]
 		if skillDiff > 0 then
 			skillDiff = skillDiff / 2
@@ -1111,7 +1169,6 @@ function Plugin:UpdatePlayers(force)
 
 end
 
-
 function Plugin:UpdateTurn()
 	if self.myTeam == 0 then return end
 
@@ -1131,6 +1188,7 @@ function Plugin:UpdateTurn()
 		end
 		-- InvalidateLayout will cause the window to refresh in the next refresh frame.
 		self.Window:InvalidateLayout( )
+		self.QueuePickCompleteCheck = true
 		return
 	end
 
@@ -1181,6 +1239,18 @@ function Plugin:ShowTeamMenu()
 
 	self.Logger:Debug( "ShowTeamMenu" )
 	self:SetIsVisible( true , 2 )
+end
+
+function Plugin:OnPlayerLost()
+	self.Logger:Debug( "Plugin:OnPlayerLost")
+	if self.myTeam == 0 then return end
+
+	Client.WindowNeedsAttention()
+	self.myTeamReady = false
+	self:GUI_SetText( nil, "ReadyButton", self.myTeamReady and "Not Ready" or "Ready" )
+	self.Window:InvalidateLayout( )
+	StartSoundEffect("sound/NS2.fev/marine/voiceovers/soldier_lost")
+	self.TeamNotice[self.myTeam] = "Player List Updated"
 end
 
 function Plugin:OnUnsetReady()
@@ -1592,7 +1662,6 @@ function Plugin:ReceiveCaptainOptions( Data )
 		self.Logger:Trace( "ReceiveCaptainOptions Print")
 		PrintTable( Data )
 	end
-	local oldOpetions = Cop
 	self.CaptainOptions = {
 		ShowSettings = Data.ShowSettings 
 	}
@@ -1607,7 +1676,6 @@ function Plugin:ReceiveEndCaptains(Data)
 
 	if SGUI.IsValid( self.Window ) then
 		self:CaptainMenuCleanup()
-
 		StartSoundEffect("sound/NS2.fev/marine/voiceovers/commander/commander_ejected")
 	end
 
@@ -1691,6 +1759,7 @@ function Plugin:OnFirstThink()
 
 	self.ProcessUnsetReady = false
 	self.QueuePlayerUpdate = false
+	self.QueuePickCompleteCheck = false
 	self.SoldierLost = false
 	self.DoTeamNameChange = false
 
@@ -1729,6 +1798,11 @@ function Plugin:Think( DeltaTime )
 	if (self.DoTeamNameChange == true ) then
 		self.DoTeamNameChange = false
 		self:SetTeamNames()
+	end
+
+	if (self.QueuePickCompleteCheck == true) then
+		self.QueuePickCompleteCheck = false
+		self:PicklistCheck()
 	end
 
 

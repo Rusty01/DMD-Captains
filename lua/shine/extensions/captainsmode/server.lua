@@ -717,6 +717,13 @@ function Plugin:ReceiveSetTeamName(Client, Data)
 	end
 end
 
+function Plugin:SendPlayerLost()
+	for Index, CaptainClient in pairs(self.Captains) do
+		self:SendNetworkMessage(CaptainClient, "PlayerLost", {}, true)
+	end
+	self:SetCaptainTurn()
+end
+
 function Plugin:SendUnsetReady()
 
 	for Index, CaptainClient in pairs(self.Captains) do
@@ -775,39 +782,7 @@ function Plugin:ReceiveSetReady(Client, Data)
 	end
 
 	if self.Ready[1] and self.Ready[2] then
-		local revokePick = false
-
-		local TeamCount = {0, 0}
-
-		for pickid, Player in pairs(self.Players) do
-			if Player.isPickable then
-			-- Revoke Pickable if Client is no longer valid.
-				Player.isPickable = Shine:IsValidClient( Player.Client )
-				if not Player.isPickable then
-					Player.team = 5
-					Player.Client = nil
-				end
-			end
-
-			if not Player.isPickable and Player.pick ~= 0 then
-				-- revoke pick
-				self:Notify(StringFormat("Picked player %s removed from team %s[%s].", Player.name,  Shine.GetClientName( self.Captains[Player.pick] ),Player.pick), "red")
-				self.Logger:Debug( "Server ReceiveSetReady revoke pick %s", Player.name )
-				Player.pick = 0
-				self:PlayerStatus( Player )
-				revokePick = true
-
-			end
-			if Player.isPickable and Player.pick ~= 0 then
-				if Player.pick == 1 then
-					TeamCount[1] = TeamCount[1] + 1
-				end
-				if Player.pick == 2 then
-					TeamCount[2] = TeamCount[2] + 1
-				end
-			end
-		end
-
+		local TeamCount, revokePick = self:ValidateTeamPlayers()
 		-- Make sure teams are not more than one appart.
 		if TeamCount[1] > (TeamCount[2]+1)
 		or TeamCount[2] > (TeamCount[1]+1) then
@@ -835,6 +810,69 @@ function Plugin:ReceiveSetReady(Client, Data)
 
 		self:StartTeams()
 	end
+end
+
+function Plugin:ReceiveCheckTeams( Client, Data )
+	if Plugin.dt.Suspended then return end
+	local PlayerName = Shine.GetClientName( Client )
+	local CaptainIndex = self:GetCaptainIndex(Client)
+	if not CaptainIndex and Data.settings == false then 
+		return
+	elseif CaptainIndex == 0 then 
+		if not Shine:HasAccess( Client, "sh_cm_captainsnight" ) then
+			self.Logger:Error("ReceiveSetReady: Unauthorized %s", PlayerName)
+			return
+		end	
+	end
+	local Team = Data.team
+	self.Logger:Debug( "Server ReceiveCheckTeams " )
+
+	local TeamCount, revokePick = self:ValidateTeamPlayers()
+	-- We had to remove a player. Let the captains know to review picks.
+	if revokePick then
+		self:Notify("Unavailable players removed.", "red")
+		self:SendPlayerLost()
+		return
+	end
+
+end
+
+function Plugin:ValidateTeamPlayers()
+
+	local revokePick = false
+	local TeamCount = {0, 0}
+
+	for pickid, Player in pairs(self.Players) do
+		if Player.isPickable then
+		-- Revoke Pickable if Client is no longer valid.
+			Player.isPickable = Shine:IsValidClient( Player.Client )
+			if not Player.isPickable then
+				Player.team = 5
+				Player.Client = nil
+			end
+		end
+
+		if not Player.isPickable and Player.pick ~= 0 then
+			-- revoke pick
+			self:Notify(StringFormat("Picked player %s removed from team %s[%s].", Player.name,  Shine.GetClientName( self.Captains[Player.pick] ),Player.pick), "red")
+			self.Logger:Debug( "Server ReceiveSetReady revoke pick %s", Player.name )
+			Player.pick = 0
+			self:PlayerStatus( Player )
+			revokePick = true
+
+		end
+		if Player.isPickable and Player.pick ~= 0 then
+			if Player.pick == 1 then
+				TeamCount[1] = TeamCount[1] + 1
+			end
+			if Player.pick == 2 then
+				TeamCount[2] = TeamCount[2] + 1
+			end
+		end
+	end
+
+	return TeamCount, revokePick
+
 end
 
 function Plugin:StartTeams()
