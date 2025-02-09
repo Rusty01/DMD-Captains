@@ -8,7 +8,7 @@
 	"CAPTAINS_AUTODISABLE_ENABLED": "Captains Auto Disable has been enabled.",
 	"CAPTAINS_AUTODISABLE_DISABLED": "Captains Auto Disable has been disabled.",
 	"CAPTAINS_NIGHT_ENABLED": "Captains Night has been enabled.",
-	"CAPTAINS_NIGHT_DISABLED": "Captains Night has been disabled.",	
+	"CAPTAINS_NIGHT_DISABLED": "Captains Night has been disabled.",
 
 	"NOTIFY_PREFIX": "[Captains Mode]",
 	"SPECTATOR_TO_CAPTAIN": "Spectators not allowed to Captain.",
@@ -27,5 +27,8 @@
 	"CAPTAINS_FIRST_PICK": "[Captains Mode] {CaptainName} picks first.",
 	"JOIN_TEAMS_BLOCKED" : "Not allowed to join {team} while captains picking is active.",
 	"JOIN_TEAMS_CAPTAINS_NIGHT" : "Not allowed to join {team} while Captains Night is active.",
-	"CAPTAINS_LASTTEAMS":"Last Teams have been set."
+	"CAPTAINS_LASTTEAMS":"Last Teams have been set.",
+	"CAPTAINS_NIGHT_GAMESTARTED" : "Captains Night Started - Team Joining allowed until match ends.",
+	"CAPTAINS_NIGHT_TEAM_BLOCK" : "Captains Night Started - Team Joining is blocked.",
+	"CAPTAINS_NIGHT_ENDED" : "Captains Night Ended - Team Joining is allowed."
 }

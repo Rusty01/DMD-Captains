@@ -4,7 +4,7 @@
 
 local Plugin = Shine.Plugin( ... )
 
-Plugin.Version = "0.10.1"
+Plugin.Version = "0.10.2"
 Plugin.HasConfig = true
 Plugin.ConfigName = "CaptainsMode.json"
 
@@ -22,7 +22,8 @@ Plugin.DefaultConfig = {
 	ShowMarineAlienToPlayers = true,
 	CountdownSeconds = 60,
 	LogLevel = "INFO",
-	BlockedVotesMinPlayer = 12
+	BlockedVotesMinPlayer = 12,
+	JoinTeamBlockDelay = 300
 }
 
 Plugin.NotifyPrefixColour = {
