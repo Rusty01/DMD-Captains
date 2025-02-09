@@ -23,7 +23,7 @@ Plugin.DefaultConfig = {
 	CountdownSeconds = 60,
 	LogLevel = "INFO",
 	BlockedVotesMinPlayer = 12,
-	JoinTeamBlockDelay = 5
+	JoinTeamBlockDelay = 300
 }
 
 Plugin.NotifyPrefixColour = {
