@@ -100,6 +100,15 @@ function Plugin:NotifyCaptainsMessage( Player )
 
 end
 
+function Plugin:NotifyCaptainsNightMessage( Player ) 
+
+	if not self.CaptainsNight then
+		self:TranslatedNotify( Player, "CAPTAINS_NIGHT_ENDED", "yellow" )
+	else
+		self:TranslatedNotify( Player, "CAPTAINS_NIGHT_TEAM_BLOCK", "yellow" )
+	end
+end
+
 do
 
 	local CAPTAINS_TYPES = {
@@ -208,12 +217,18 @@ function Plugin:ResetState()
 	self.CaptainTurn = nil
 	self.MovingPlayers = false
 	self.GameStarted = false
+	self.JoinTeamBlock = false
+	self.JoinTeamBlockTime = 0
 
 	self.Team1IsMarines = true
 	self.dt.Team1Name= self.DefaultTeamNames[1]
 	self.dt.Team2Name= self.DefaultTeamNames[2]
 
 	self.dt.CaptainTurn = 0
+
+	if self.CaptainsNight then
+		self:CreateCaptainTimer()
+	end
 
 end
 
@@ -370,6 +385,7 @@ function Plugin:CreateCommands()
 		self.Logger:Info( "Captains Night %s ", self.CaptainsNight )
 		self.Logger:Info( "Captains Suspended %s ", self.dt.Suspended )
 		self.Logger:Info( "Captains %s ", self.dt.Captains )
+		self.Logger:Info( "Captains Join Team %s ", self.JoinTeamBlock and "Blocked" or "Not Blocked")
 	end):Help( "Lists the current Captains status." )
 
 
@@ -380,6 +396,7 @@ function Plugin:CreateCommands()
 end
 
 function Plugin:OnCaptainsNightChange( CaptainsNightChange )
+	local lastCaptainsNight = self.CaptainsNight
 
 	if CaptainsNightChange then
 		self:SetFeatureEnabled( "CaptainsNight", CaptainsNightChange )
@@ -387,9 +404,9 @@ function Plugin:OnCaptainsNightChange( CaptainsNightChange )
 			self:SetFeatureEnabled( "Captains", true )
 			self:NotifyState( nil );
 		end	
-		self.CaptainsNight = self.dt.CaptainsNight		
+		self.CaptainsNight = self.dt.CaptainsNight
 		local pcallSuccess, GameState = pcall(function() return GetGamerules():GetGameState() end)
-		self.Logger:Trace( "OnCaptainsNightChange %s %s", pcallSuccess, GameState  )
+		self.Logger:Trace( "OnCaptainsNightChange - %s - GameState %s - Last %s", pcallSuccess, GameState, lastCaptainsNight and "True" or "False" )
 		if pcallSuccess and GameState ~= kGameState.Started then
 			--this forces everyone to the ready room
 			local Enabled, MapVote = Shine:IsExtensionEnabled( "mapvote" )
@@ -403,14 +420,19 @@ function Plugin:OnCaptainsNightChange( CaptainsNightChange )
 			if not self.InProgress then 
 				self:CreateCaptainTimer()
 			end
-		end		
+		elseif pcallSuccess and GameState == kGameState.Started and not self.JoinTeamBlock then
+			self.Logger:Trace( "Server Captains Night Started - Game Already Started" )
+			self:TranslatedNotify( nil, "CAPTAINS_NIGHT_GAMESTARTED", "yellow" )
+			return
+		end
 	else
 		self:SetFeatureEnabled( "CaptainsNight", CaptainsNightChange )		
 		self.CaptainsNight = self.dt.CaptainsNight
+		if not self.Pending then 
+			self:DestroyTimer("NeedOneMoreCaptain")
+		end
 	end
-	local message = StringFormat( "Captains Night - team joining %s.", self.CaptainsNight and "Blocked" or "Allowed" )
-	self.Logger:Debug( message )
-	self:Notify( message, "yellow")	
+	self:NotifyCaptainsNightMessage()
 end
 
 function Plugin:ReportTeams( Client )
@@ -1218,7 +1240,7 @@ end
 --[[
 	Block players from joining Marines or Aliens while we are Picking Teams
 ]]
-function Plugin:JoinTeam(_, Player, NewTeam, Force, ShineForce)
+function Plugin:JoinTeam(Gamerules, Player, NewTeam, Force, ShineForce)
 	if ShineForce then self.Logger:Trace( "Server JoinTeam Force"); return end
 	if self.dt.Suspended then return end
 
@@ -1229,12 +1251,17 @@ function Plugin:JoinTeam(_, Player, NewTeam, Force, ShineForce)
 	end
 
 	if not Player then return end
-	local PlayerName = Player:GetName()
+	if NewTeam == 0 then
+		return
+	end
+	local Client = Shine.GetClientForPlayer( Player )
+	-- Ignore all bot team changes.
+	if Client and Client:GetIsVirtual() then return end	
 
+	local PlayerName = Player:GetName()
 	-- this is "before" the team on Player:GetTeamNumber is updated.
 	if NewTeam == 3 then
 		-- Don't allow captains into spec
-		local Client = Shine.GetClientForPlayer( Player )
 		if self:IsCaptain(Client) then
 			Shine:NotifyError(Player
 				,StringFormat("Captain not allowed to join %s [%s]. You must !cancelcaptains first."
@@ -1245,27 +1272,27 @@ function Plugin:JoinTeam(_, Player, NewTeam, Force, ShineForce)
 		--Moved To Spectate
  		--Shine:NotifyError(Player,StringFormat("Attempting to join Team %s [%s].", Plugin:GetTeamName( NewTeam ), NewTeam))
 		return
-	elseif NewTeam == 0 then
-		return
-	else
-		-- If we are testing, Allow Bots to join teams.
-		if self.dt.TestingCaptains then
-			local Client = Shine.GetClientForPlayer( Player )
-			if Client and Client:GetIsVirtual() then return end
-		end
-		-- Not Spectate, Not ReadyRoom
-		self.Logger:Debug( "Player Blocked from joining team %s : %s", NewTeam, PlayerName )
-		if not self.CaptainsNight or self.InProgress then 
-			self:SendTranslatedError( Player, "JOIN_TEAMS_BLOCKED", {
-				team= Plugin:GetTeamName( NewTeam )
-			} )
-		else
-			self:SendTranslatedError( Player, "JOIN_TEAMS_CAPTAINS_NIGHT", {
-				team= Plugin:GetTeamName( NewTeam )
-			} )			
-		end
-		return false
 	end
+	-- NewTeam :: Not Readyroom and Not Spectator
+
+	local GameState = Gamerules:GetGameState()
+	if GameState and GameState == kGameState.Started and not self.JoinTeamBlock then
+		-- Allow people to Join if the Game has started.
+		self.Logger:Trace( "Server JoinTeam Game Started [%s]", NewTeam); 
+		return
+	end
+	-- Not Spectate, Not ReadyRoom
+	self.Logger:Debug( "Player Blocked from joining team %s : %s", NewTeam, PlayerName )
+	if not self.CaptainsNight or self.InProgress then 
+		self:SendTranslatedError( Player, "JOIN_TEAMS_BLOCKED", {
+			team= Plugin:GetTeamName( NewTeam )
+		} )
+	else
+		self:SendTranslatedError( Player, "JOIN_TEAMS_CAPTAINS_NIGHT", {
+			team= Plugin:GetTeamName( NewTeam )
+		} )			
+	end
+	return false
 
 end
 
@@ -1355,6 +1382,8 @@ function Plugin:SetGameState(Gamerules, State, OldState)
 		self:DestroyTimer("EndCaptainsGame")
 		-- The Captains game is starting. Send the Team Notification.
 		self.GameStarted = true
+		self.JoinTeamBlock = true
+		self.JoinTeamBlockTime = Shared.GetTime() + Plugin.Config.JoinTeamBlockDelay
 		self:DestroyTimer("GameStartCountdown")
 		self.InProgress = false
 
@@ -1415,15 +1444,19 @@ function Plugin:ClientConfirmConnect( Client )
 	if self.dt.Suspended then return end
 	self:SendCaptainOptions( Client )
 
-	if not self.InProgress then 
-		self:NotifyCaptainsMessage(Client);
-		return 
-	end
-
 	self:PlayerUpdate( Client )
 
 	local IsBot = Client:GetIsVirtual()
 	if IsBot then return end
+
+	-- Send messages for Captains night and making yourself captain.
+	if self.CaptainsNight then
+		self:NotifyCaptainsNightMessage(Client);
+	end
+	if not self.InProgress then 
+		self:NotifyCaptainsMessage(Client);
+		return 
+	end
 
 	-- lets make sure the new player is updated.
 	for pickid, Player in pairs(self.Players) do
@@ -1663,13 +1696,22 @@ function Plugin:Think( DeltaTime )
 	-- Something wants to End captains.
 	if (self.ProcessEndCaptains == true) then
 		self.ProcessEndCaptains = false
+		self.JoinTeamBlock = false
 		if self.Pending then
 			self:EndCaptains()
+		end
+		if self.CaptainsNight then
+			self:DestroyTimer("NeedOneMoreCaptain")
 		end
 	end
 	if (self.ProcessResetLastTeams == true) then
 		self.ProcessResetLastTeams = false
 		self:ResetLastTeams()
+	end
+
+	if self.JoinTeamBlock and self.JoinTeamBlockTime and self.JoinTeamBlockTime < Time then
+		self.JoinTeamBlock = false
+		self.Logger:Trace( "Server Captains Night - Team Joining Now Allowed" )
 	end
 
 end
