@@ -30,5 +30,6 @@
 	"CAPTAINS_LASTTEAMS":"Last Teams have been set.",
 	"CAPTAINS_NIGHT_GAMESTARTED" : "Captains Night Started - Team Joining allowed until match ends.",
 	"CAPTAINS_NIGHT_TEAM_BLOCK" : "Captains Night Started - Team Joining is blocked.",
-	"CAPTAINS_NIGHT_ENDED" : "Captains Night Ended - Team Joining is allowed."
+	"CAPTAINS_NIGHT_ENDED" : "Captains Night Ended - Team Joining is allowed.",
+	"CAPTAINS_NIGHT_TIMELIMIT" : "Captains Night - Team joining now allowed, time limit reached."
 }
