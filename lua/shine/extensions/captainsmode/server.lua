@@ -78,12 +78,12 @@ function Plugin:NotifyCaptainsMessage( Player )
 
 	if #self.Captains == 1 then
 		self:TranslatedNotify( Player, "CAPTAINS_NEED_ONE" , "yellow")
-		self:TranslatedNotify( Player, "CAPTAINS_APPOINT" )				
+		self:TranslatedNotify( Player, "CAPTAINS_APPOINT" )
 		local CaptainName = Shine.GetClientName( self.Captains[1] )
 		self:SendTranslatedNotify( Player, "CAPTAINS_ANNOUNCE_NAME", {
 			CaptainName= CaptainName
 		} )
-	
+
 	elseif #self.Captains == 2 then
 		self:TranslatedNotify( Player, "CAPTAINS_STARTED", "yellow" )
 		local Captain1Name = Shine.GetClientName( self.Captains[1] )
@@ -95,7 +95,7 @@ function Plugin:NotifyCaptainsMessage( Player )
 
 	else
 		self:TranslatedNotify( Player, "CAPTAINS_NEED_MORE" , "yellow")
-		self:TranslatedNotify( Player, "CAPTAINS_APPOINT" )				
+		self:TranslatedNotify( Player, "CAPTAINS_APPOINT" )
 	end
 
 end
@@ -148,7 +148,7 @@ do
 
 		Enabled = Enabled and true or false
 		self.Config[ Type ] = Enabled
-		
+
 		if CAPTAINS_DT[ Type ] then 
 			self.dt[ Type ] = Enabled 
 		end
@@ -158,7 +158,7 @@ do
 		end
 
 		self.Logger:Trace( "Feature %s toggle %s", Type, ( Enabled and "ENABLED" or "DISABLED" ) )
-	
+
 		Shine.Hook.Broadcast( "OnCaptainsStateChange", Type, Enabled )
 	end
 
@@ -180,7 +180,8 @@ function Plugin:Initialise()
 	self.dt.CaptainsNight = (Plugin.Config.CaptainsNight ~= false)
 	self.dt.Captains = (Plugin.Config.Captains ~= false)
 	self.dt.Suspended = (self.dt.Captains ~= true)
-	self.ProcessStartCaptainsNight = (self.dt.CaptainsNight == true and self.dt.Captains ~= true)
+	self.PostLoad_StartCaptainsNight = (self.dt.CaptainsNight == true and self.dt.Captains ~= true)
+	self.ProcessCreateCaptainTimer = false
 
 	if Plugin.Config.ShowMarineAlienToCaptains then
 		self.DefaultTeamNames = {"Marines", "Aliens"}
@@ -226,10 +227,6 @@ function Plugin:ResetState()
 	self.dt.Team2Name= self.DefaultTeamNames[2]
 
 	self.dt.CaptainTurn = 0
-
-	if self.CaptainsNight and self.dt.Captains then
-		self:CreateCaptainTimer()
-	end
 
 end
 
@@ -302,7 +299,7 @@ function Plugin:CreateCommands()
 		if self.dt.Suspended then 
 			self:NotifyState( Client );
 			return
-		end		
+		end
 
 		local PlayerName = Shine.GetClientName( Client )
 		if self:IsCaptain(Client)
@@ -325,7 +322,7 @@ function Plugin:CreateCommands()
 		if self.dt.Suspended then 
 			self:NotifyState( Client );
 			return
-		end		
+		end
 
 		local PlayerName = Shine.GetClientName( Client )
 		self:EndCaptains()
@@ -368,7 +365,7 @@ function Plugin:CreateCommands()
 		self.Logger:Trace( "Captains Night toggle %s", Enable and "Enabled" or "Disable")
 		self:OnCaptainsNightChange( Enable )
 	end)
-	CaptainsNight:Help("Toggle Captains Night to block team joining.")	
+	CaptainsNight:Help("Toggle Captains Night to block team joining.")
 	CaptainsNight:AddParam{ Type = "boolean", Optional = true, Default = true, Help = "Enabled" }
 
 	self:BindCommand("sh_cm_autodisable", nil, function (client) 
@@ -405,43 +402,51 @@ end
 function Plugin:OnCaptainsNightChange( CaptainsNightChange )
 	local lastCaptainsNight = self.CaptainsNight
 
-	if CaptainsNightChange then
+	if not CaptainsNightChange then
 		self:SetFeatureEnabled( "CaptainsNight", CaptainsNightChange )
-		if self.dt.Suspended then
-			self:SetFeatureEnabled( "Captains", true )
-			self:NotifyState( nil );
-		end	
-		self.CaptainsNight = self.dt.CaptainsNight
-		local pcallSuccess, GameState = pcall(function() return GetGamerules():GetGameState() end)
-		if pcallSuccess then
-			self.Logger:Trace( "OnCaptainsNightChange - GameState %s - Last %s", GameState or "NoState", lastCaptainsNight and "True" or "False" )
-		end
-		
-		if pcallSuccess and GameState ~= kGameState.Started then
-			--this forces everyone to the ready room
-			local Enabled, MapVote = Shine:IsExtensionEnabled( "mapvote" )
-			if Enabled then
-				self.Logger:Trace( "Server ForcePlayersIntoReadyRoom" )
-				MapVote:ForcePlayersIntoReadyRoom()
-			else
-				self.Logger:Trace( "Server ForcePlayersIntoReadyRoom fallback sh_rr @alien,@marine" )
-				Shared.ConsoleCommand("sh_rr @alien,@marine")
-			end
-			if not self.InProgress then 
-				self:CreateCaptainTimer()
-			end
-		elseif pcallSuccess and GameState == kGameState.Started and not self.JoinTeamBlock then
-			self.Logger:Trace( "Server Captains Night Started - Game Already Started" )
-			self:TranslatedNotify( nil, "CAPTAINS_NIGHT_GAMESTARTED", "yellow" )
-			return
-		end
-	else
-		self:SetFeatureEnabled( "CaptainsNight", CaptainsNightChange )		
 		self.CaptainsNight = self.dt.CaptainsNight
 		if not self.Pending then 
 			self:DestroyTimer("NeedOneMoreCaptain")
 		end
 		self.JoinTeamBlock = false
+		self:NotifyCaptainsNightMessage()
+		return
+	end
+
+	self:SetFeatureEnabled( "CaptainsNight", CaptainsNightChange )
+	if self.dt.Suspended then
+		self:SetFeatureEnabled( "Captains", true )
+		self:NotifyState( nil );
+	end
+	self.CaptainsNight = self.dt.CaptainsNight
+	local pcallSuccess, GameState = pcall(function() return GetGamerules():GetGameState() end)
+	if not pcallSuccess then
+		self:NotifyCaptainsNightMessage()
+		return
+	end
+
+	self.Logger:Trace( "OnCaptainsNightChange - GameState %s - Last %s", GameState or "NoState", lastCaptainsNight and "True" or "False" )
+	if GameState >= kGameState.Started then
+		if not self.JoinTeamBlock  then
+			self:NotifyCaptainsNightMessage()
+		else
+			self.Logger:Trace( "Server Captains Night Started - Game Already Started" )
+			self:TranslatedNotify( nil, "CAPTAINS_NIGHT_GAMESTARTED", "yellow" )
+		end
+		return
+	end
+	--if GameState < kGameState.Started then
+	--this forces everyone to the ready room
+	local Enabled, MapVote = Shine:IsExtensionEnabled( "mapvote" )
+	if Enabled then
+		self.Logger:Trace( "Server ForcePlayersIntoReadyRoom" )
+		MapVote:ForcePlayersIntoReadyRoom()
+	else
+		self.Logger:Trace( "Server ForcePlayersIntoReadyRoom fallback sh_rr @alien,@marine" )
+		Shared.ConsoleCommand("sh_rr @alien,@marine")
+	end
+	if not self.InProgress then 
+		self.ProcessCreateCaptainTimer = true
 	end
 	self:NotifyCaptainsNightMessage()
 end
@@ -515,6 +520,7 @@ end
 
 function Plugin:CreateCaptainTimer( )
 	if self.dt.Suspended then return end
+
 	self:CreateTimer(
 		"NeedOneMoreCaptain",
 		20,
@@ -651,7 +657,7 @@ function Plugin:StartCaptainsPresetup()
 		if DMDBotManager and Enabled then
 			-- This should bock DMD Plugin from manipulating bots
 			-- force bots disabled.
-			DMDBotManager:SetBotsEnabled(false)			
+			DMDBotManager:SetBotsEnabled(false)
 			-- force bot delay to 24 hours.
 			DMDBotManager:ForceBotDelay(86400)
 			self.Logger:Info( "DMD Bot Delay set to 86400." )
@@ -661,9 +667,9 @@ function Plugin:StartCaptainsPresetup()
 				local BotController = Gamerules.botTeamController
 				self.SavedBotControllerMaxBots = BotController.MaxBots
 			end
-			Shared.ConsoleCommand(StringFormat("sv_maxbots %d", 0))				
+			Shared.ConsoleCommand(StringFormat("sv_maxbots %d", 0))
 		end
-		
+
 		self.AutoRemoveBotsComplete = true
 	end
 
@@ -792,7 +798,7 @@ function Plugin:ReceiveSetReady(Client, Data)
 		if not Shine:HasAccess( Client, "sh_cm_captainsnight" ) then
 			self.Logger:Error("ReceiveSetReady: Unauthorized %s", PlayerName)
 			return
-		end	
+		end
 	end
 	local Team = Data.team
 	local Ready = Data.ready
@@ -856,7 +862,7 @@ function Plugin:ReceiveCheckTeams( Client, Data )
 		if not Shine:HasAccess( Client, "sh_cm_captainsnight" ) then
 			self.Logger:Error("ReceiveSetReady: Unauthorized %s", PlayerName)
 			return
-		end	
+		end
 	end
 	local Team = Data.team
 	self.Logger:Debug( "Server ReceiveCheckTeams " )
@@ -1013,6 +1019,11 @@ function Plugin:MatchComplete()
 	self:ResetState()
 	--self:SendNetworkMessage(self.Captains, "EndCaptains", {}, true)
 
+	-- When Captains Night, reactivate Captains timer.
+	if self.dt.CaptainsNight and self.dt.Captains then
+		self.ProcessCreateCaptainTimer = true
+	end
+
 end
 
 
@@ -1033,6 +1044,10 @@ function Plugin:EndCaptains()
 			Shared.ConsoleCommand(StringFormat("sv_maxbots %d", maxbots))
 			self.SavedBotControllerMaxBots = nil
 		end
+	end
+	-- When Captains Night, reactivate Captains timer.
+	if self.dt.CaptainsNight and self.dt.Captains then
+		self.ProcessCreateCaptainTimer = true
 	end
 end
 
@@ -1145,22 +1160,22 @@ function Plugin:OnSwapTeams( Client )
 	teamNames[2] = self.dt.Team2Name
 	if self.Team1IsMarines then 
 		if teamNames[1] == defaultTeamNames[2] then
-			teamNames[1] = defaultTeamNames[1]	
+			teamNames[1] = defaultTeamNames[1]
 		end
 		if teamNames[2] == defaultTeamNames[1] then
-			teamNames[2] = defaultTeamNames[2]	
+			teamNames[2] = defaultTeamNames[2]
 		end
 	else
 		if teamNames[1] == defaultTeamNames[1] then
-			teamNames[1] = defaultTeamNames[2]	
+			teamNames[1] = defaultTeamNames[2]
 		end
 		if teamNames[2] == defaultTeamNames[2] then
-			teamNames[2] = defaultTeamNames[1]	
-		end		
+			teamNames[2] = defaultTeamNames[1]
+		end
 	end
 	self.dt.Team1Name= teamNames[1]
 	self.dt.Team2Name= teamNames[2]
-	
+
 	if Plugin.Config.AllowPlayersToViewTeams then
 		self:SendNetworkMessage( nil , "SwapTeams", {team1marines = self.Team1IsMarines}, true)
 	else
@@ -1268,7 +1283,7 @@ function Plugin:JoinTeam(Gamerules, Player, NewTeam, Force, ShineForce)
 	end
 	local Client = Shine.GetClientForPlayer( Player )
 	-- Ignore all bot team changes.
-	if Client and Client:GetIsVirtual() then return end	
+	if Client and Client:GetIsVirtual() then return end
 
 	local PlayerName = Player:GetName()
 	-- this is "before" the team on Player:GetTeamNumber is updated.
@@ -1302,7 +1317,7 @@ function Plugin:JoinTeam(Gamerules, Player, NewTeam, Force, ShineForce)
 	else
 		self:SendTranslatedError( Player, "JOIN_TEAMS_CAPTAINS_NIGHT", {
 			team= Plugin:GetTeamName( NewTeam )
-		} )			
+		} )
 	end
 	return false
 
@@ -1375,6 +1390,10 @@ function Plugin:SetGameState(Gamerules, State, OldState)
 			self:MatchComplete()
 		end)
 		return
+	elseif State > kGameState.Started 
+	and self.dt.CaptainsNight and self.dt.Captains then
+		-- We want to restart the Captains message for Captains night
+		self.ProcessCreateCaptainTimer = true
 	end
 
 	if State == kGameState.Started
@@ -1386,8 +1405,6 @@ function Plugin:SetGameState(Gamerules, State, OldState)
 		self.ProcessResetLastTeams = true
 		return
 	end
-
-	-- self.InProgress and
 
 	if State == kGameState.Started then
 		self.Logger:Trace( "Captains Mode Game Starting" )
@@ -1563,7 +1580,7 @@ function Plugin:CreateTestingCommands()
 	]]
 	local function TestCaptain(Client)
 		if Plugin.dt.Suspended then return end
-		
+
 		local PlayerName = Shine.GetClientName( Client )
 		-- If there is a game in progress, deny it.
 		local Gamerules = GetGamerules()
@@ -1726,11 +1743,15 @@ function Plugin:Think( DeltaTime )
 		self.Logger:Info( "Server Captains Night - Team joining now allowed, time limit reached." )
 		self:NotifyTranslated( nil , "CAPTAINS_NIGHT_TIMELIMIT" )
 	end
+	if self.ProcessCreateCaptainTimer then
+		self.ProcessCreateCaptainTimer = false
+		self:CreateCaptainTimer()
+	end
 
 end
 
 function Plugin:MapPostLoad()
-	
+
 	self:OverrideShuffleTeams()
 
 	if (Plugin.Config.AutoDisableSelf ~=false) then
@@ -1738,11 +1759,12 @@ function Plugin:MapPostLoad()
 		-- Disable self after a new map loads.
 		self:SetFeatureEnabled( "Captains", false, true )
 
-	elseif self.ProcessStartCaptainsNight then
+	elseif self.PostLoad_StartCaptainsNight then
+		self.PostLoad_StartCaptainsNight = false
 		self.Logger:Trace( "Process Captains Night Delayed Start" )
 		self:OnCaptainsNightChange( true )
 	end
-	
+
 end
 
 function Plugin:OverrideShuffleTeams()
@@ -1757,7 +1779,7 @@ function Plugin:OverrideShuffleTeams()
 
 		local oldShuffleTeams = VoteRandom.ShuffleTeams;
 		VoteRandom.ShuffleTeams = function(self, ResetScores, ForceMode)
-			
+
 			if captains.dt.Suspended then 
 				oldShuffleTeams(self, ResetScores, ForceMode); 
 				return 
@@ -1799,7 +1821,7 @@ end
 
 function Plugin:OnResume()
 	self.Logger:Trace( "server: Plugin:OnResume")
-	self.dt.Suspended = false	
+	self.dt.Suspended = false
 	self:SetFeatureEnabled( "Captains", true, true )
 end
 
