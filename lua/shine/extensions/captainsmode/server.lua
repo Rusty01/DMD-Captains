@@ -1764,12 +1764,7 @@ function Plugin:MapPostLoad()
 
 	self:OverrideShuffleTeams()
 
-	if (Plugin.Config.AutoDisableSelf ~=false) then
-		self.Logger:Info( "Captains mode is Auto Disabled on map change." )
-		-- Disable self after a new map loads.
-		self:SetFeatureEnabled( "Captains", false, true )
-
-	elseif self.PostLoad_StartCaptainsNight then
+	 if self.PostLoad_StartCaptainsNight then
 		self.PostLoad_StartCaptainsNight = false
 		if self:DecrementCaptainsNightCount() then
 			self.Logger:Trace( "Process Captains Night Delayed Start" )
@@ -1777,6 +1772,12 @@ function Plugin:MapPostLoad()
 		end
 	elseif not self:DecrementCaptainsNightCount() and self:IsFeatureEnabled("CaptainsNight") then
 		self:OnCaptainsNightChange( false )
+	end
+
+	if (Plugin.Config.AutoDisableSelf ~=false and not self:IsFeatureEnabled("CaptainsNight")) then
+		self.Logger:Info( "Captains mode is Auto Disabled on map change." )
+		-- Disable self after a new map loads.
+		self:SetFeatureEnabled( "Captains", false, true )
 	end
 
 end
