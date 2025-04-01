@@ -162,6 +162,15 @@ do
 		Shine.Hook.Broadcast( "OnCaptainsStateChange", Type, Enabled )
 	end
 
+	function Plugin:DecrementCaptainsNightCount()
+		if self.Config.CaptainsNightCount < 1 then
+			return false
+		end
+		self.Config.CaptainsNightCount = self.Config.CaptainsNightCount - 1
+		self:SaveConfig( true )
+		return true
+	end
+
 end
 
 
@@ -389,6 +398,7 @@ function Plugin:CreateCommands()
 		self:NotifyFeatureState( "Captains", self.dt.Captains, Client )
 		self:TranslatedNotify( Client, StringFormat("Captains Mode is %s.", self.dt.Suspended and "Suspended" or "Active"),  self.dt.Suspended and "red" or "green" )
 		self:TranslatedNotify( Client, StringFormat("Active Game Join Team %s.", self.JoinTeamBlock and "Blocked" or "Not Blocked"),  self.JoinTeamBlock and "red" or "green" )
+		self:TranslatedNotify( Client, StringFormat("Captains Night Count %s.", self.Config.CaptainsNightCount ),  self.Config.CaptainsNightCount > 0 and "green" or "red" )
 
 	end):Help( "Lists the current Captains status." )
 
@@ -1761,8 +1771,12 @@ function Plugin:MapPostLoad()
 
 	elseif self.PostLoad_StartCaptainsNight then
 		self.PostLoad_StartCaptainsNight = false
-		self.Logger:Trace( "Process Captains Night Delayed Start" )
-		self:OnCaptainsNightChange( true )
+		if self:DecrementCaptainsNightCount() then
+			self.Logger:Trace( "Process Captains Night Delayed Start" )
+			self:OnCaptainsNightChange( true )
+		end
+	elseif not self:DecrementCaptainsNightCount() and self:IsFeatureEnabled("CaptainsNight") then
+		self:OnCaptainsNightChange( false )
 	end
 
 end
@@ -1801,7 +1815,10 @@ end
 
 
 function Plugin:OnCaptainsStateChange( Type, Enabled )
-	if Type ~= "Captains" then return end
+	if Type ~= "Captains" then 
+		self:OnCaptainsNightStateChange( Type, Enabled )
+		return 
+	end
 
 	self.dt.Suspended = (self.dt.Captains ~= true)
 
@@ -1811,6 +1828,15 @@ function Plugin:OnCaptainsStateChange( Type, Enabled )
 		self:ResetState()
 	end
 
+end
+
+function Plugin:OnCaptainsNightStateChange( Type, Enabled )
+	if Type ~= "CaptainsNight" then return end
+
+	if Enabled and self.Config.CaptainsNightCount < 1 then
+		self.Config.CaptainsNightCount = self.Config.CaptainsNightDefaultCount
+		self:SaveConfig( true )
+	end
 end
 
 function Plugin:OnSuspend()
